@@ -22,27 +22,41 @@
     <main id="app">
       <!-- メニュー画面 -->
       <div id="menu-screen">
-        <header class="header">
+        <header class="brand">
+          <p class="brand-en" aria-hidden="true">KISO RHYTHM GAME</p>
           <h1>木曽リズムゲーム</h1>
-          <button id="sound-button" type="button" class="icon-button" aria-label="音" aria-pressed="true">🔊</button>
         </header>
-        <p class="muted intro">木曽を歌う2曲で遊ぶ、4レーンのリズムゲームです。流れてくるノーツが下の枠に重なったらタップ（パソコンは D / F / J / K キー）。</p>
 
-        <section aria-label="曲の選択">
-          <h2 class="section-title">曲を選ぶ</h2>
-          <div id="song-list" class="song-list"></div>
+        <!-- 選択中の曲を主役にするヒーロー表示 -->
+        <section class="hero" aria-label="選択中の曲">
+          <img id="hero-jacket" class="hero-jacket" alt="">
+          <div class="hero-overlay">
+            <h2 id="hero-title" class="hero-title"></h2>
+            <p class="hero-chips">
+              <span class="chip" id="hero-album"></span>
+              <span class="chip" id="hero-bpm"></span>
+              <span class="chip" id="hero-length"></span>
+            </p>
+          </div>
         </section>
 
-        <section class="card" aria-label="難易度と設定">
-          <h2 class="section-title">難易度</h2>
-          <div class="row" id="diff-row" role="group" aria-label="難易度">
-            <button type="button" class="opt" data-diff="easy" aria-pressed="true">かんたん</button>
-            <button type="button" class="opt" data-diff="normal" aria-pressed="false">ふつう</button>
-            <button type="button" class="opt" data-diff="hard" aria-pressed="false">むずかしい</button>
-          </div>
+        <div id="song-list" class="song-list" role="group" aria-label="曲を選ぶ"></div>
+
+        <div class="row diff-row" id="diff-row" role="group" aria-label="難易度">
+          <button type="button" class="opt" data-diff="easy" aria-pressed="true">かんたん</button>
+          <button type="button" class="opt" data-diff="normal" aria-pressed="false">ふつう</button>
+          <button type="button" class="opt" data-diff="hard" aria-pressed="false">むずかしい</button>
+        </div>
+
+        <button id="start-button" type="button" class="primary go">スタート</button>
+        <p id="start-status" class="muted" role="status"></p>
+        <p class="note howto">ノーツが下の枠に重なったらタップ（パソコンは D / F / J / K）。左上の ✕ で中断できます。</p>
+
+        <section class="card settings" aria-label="設定">
+          <h2 class="section-title">設定</h2>
           <p class="muted best-line">ベストスコア: <span id="menu-best">0</span></p>
 
-          <h2 class="section-title">タイミング調整（オフセット）</h2>
+          <h3 class="sub-title">タイミング調整（オフセット）</h3>
           <div class="offset-row">
             <button type="button" id="offset-minus" aria-label="オフセットを10ms減らす">−</button>
             <span id="offset-value" aria-live="polite">0ms</span>
@@ -50,8 +64,15 @@
           </div>
           <p class="note">ノーツが遅れて感じる → ＋ ／ 早く感じる → −。Bluetoothイヤホンのときは ＋ が目安です。</p>
 
-          <button id="start-button" type="button" class="primary go">スタート</button>
-          <p id="start-status" class="muted" role="status"></p>
+          <div class="toggle-row">
+            <span>効果音</span>
+            <button id="sound-button" type="button" class="toggle" aria-label="効果音" aria-pressed="true"><span class="toggle-state">オン</span></button>
+          </div>
+          <div class="toggle-row">
+            <span>振動</span>
+            <button id="vibrate-button" type="button" class="toggle" aria-label="振動" aria-pressed="true"><span class="toggle-state">オン</span></button>
+          </div>
+          <p class="note">振動は、対応している端末（Android など）だけで働きます。</p>
         </section>
 
         <details class="backup">

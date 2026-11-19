@@ -2,6 +2,7 @@
 // 元ゲームからの改善:
 //  (a) 音源は src/audio.ts が曲ごとに保持するので、再プレイで再デコードしない
 //  (b) プレイ中にタブ/画面が隠れたら、演奏を止めてメニューに戻す（裏で進んで大量MISSになるのを防ぐ）
+// 演出（粒子・輪・波紋・判定文字）はすべて経過時間ベースで進める（120Hz でも 60Hz と同じ見え方にする）。
 import {
   DIFFICULTIES,
   LANE_COLORS,
@@ -20,7 +21,8 @@ import {
 } from './logic';
 import type { SongEntry } from './charts';
 import { audioContext, loadBuffer, nowSeconds, playBuffer, stopCurrent } from './audio';
-import { beep } from './sound';
+import { playHitSound } from './sound';
+import { vibrateHit } from './haptics';
 import { setData } from './debug';
 
 export interface GameResult {
@@ -43,18 +45,47 @@ const HIT_Y_RATIO = 0.82;
 const READY_SECONDS = 2;
 const JUDGE_LABEL: Record<Judge, string> = { perfect: 'PERFECT', great: 'GREAT', good: 'GOOD', miss: 'MISS' };
 const JUDGE_COLOR: Record<Judge, string> = { perfect: '#ffd166', great: '#4ecdc4', good: '#9aa8ff', miss: '#ff6b6b' };
-const JUDGE_BEEP: Record<Exclude<Judge, 'miss'>, number> = { perfect: 990, great: 880, good: 740 };
+const GOLD = '#ffd166';
 
+/** 粒子（ヒットで弾ける） */
 interface Particle {
-  kind: 0 | 1;
   x: number;
   y: number;
   vx: number;
   vy: number;
-  r: number;
-  a: number;
+  age: number;
+  life: number;
   c: string;
 }
+/** 広がる輪（ヒットの衝撃） */
+interface Ring {
+  x: number;
+  y: number;
+  age: number;
+  life: number;
+  maxR: number;
+  c: string;
+}
+/** ノーツが一瞬膨らんで消える残像 */
+interface Pop {
+  lane: number;
+  age: number;
+  life: number;
+  c: string;
+}
+/** タップした場所に出る波紋 */
+interface Ripple {
+  x: number;
+  y: number;
+  age: number;
+  life: number;
+  c: string;
+}
+
+const RING_LIFE = 0.32;
+const POP_LIFE = 0.18;
+const RIPPLE_LIFE = 0.38;
+const JUDGE_LIFE = 0.55;
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -76,9 +107,13 @@ export class Game {
   private bg: HTMLImageElement | null = null;
   private flash = [0, 0, 0, 0];
   private particles: Particle[] = [];
+  private rings: Ring[] = [];
+  private pops: Pop[] = [];
+  private ripples: Ripple[] = [];
   private judgeText = '';
   private judgeColor = '#fff';
-  private judgeAlpha = 0;
+  private judgeShownAt = -Infinity; // AudioContext 時刻（秒）
+  private lastFrameAt = 0; // 前フレームの AudioContext 時刻（秒）。dt の計算用
   private width = 0;
   private height = 0;
 
@@ -93,7 +128,7 @@ export class Game {
       return;
     }
     const lane = Math.min(3, Math.max(0, Math.floor(px / (this.width / 4))));
-    this.tap(lane);
+    this.tap(lane, px, py);
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {
@@ -144,14 +179,18 @@ export class Game {
     this.combo = 0;
     this.maxCombo = 0;
     this.particles = [];
+    this.rings = [];
+    this.pops = [];
+    this.ripples = [];
     this.flash = [0, 0, 0, 0];
     this.judgeText = '';
-    this.judgeAlpha = 0;
+    this.judgeShownAt = -Infinity;
     this.durationSec = buf.duration;
     this.bg = new Image();
     this.bg.src = entry.jacketUrl;
     audioContext();
     this.startAt = nowSeconds() + READY_SECONDS;
+    this.lastFrameAt = nowSeconds();
     playBuffer(buf, this.startAt);
     this.playing = true;
     setData('game', 'playing');
@@ -175,8 +214,17 @@ export class Game {
     if (this.playing) this.finish();
   }
 
-  private tap(lane: number): void {
+  private tap(lane: number, rippleX?: number, rippleY?: number): void {
     this.flash[lane] = 1;
+    // 押した場所に波紋を出す（キーボードのときはレーンの判定ライン中央）
+    const lw = this.width / 4;
+    this.ripples.push({
+      x: rippleX ?? lane * lw + lw / 2,
+      y: rippleY ?? this.height * HIT_Y_RATIO,
+      age: 0,
+      life: RIPPLE_LIFE,
+      c: LANE_COLORS[lane],
+    });
     const nowMs = (nowSeconds() - this.startAt) * 1000;
     const hit = findHit(this.notes, lane, nowMs);
     if (!hit) return;
@@ -188,27 +236,38 @@ export class Game {
     this.maxCombo = Math.max(this.maxCombo, this.combo);
     this.showJudge(hit.judge);
     this.burst(lane, hit.judge === 'perfect' ? 0 : hit.judge === 'great' ? 1 : 2, fever);
-    beep(JUDGE_BEEP[hit.judge], 0.05);
+    playHitSound(hit.judge);
+    vibrateHit(hit.judge);
     setData('score', this.score);
   }
 
   private showJudge(judge: Judge): void {
     this.judgeText = JUDGE_LABEL[judge];
     this.judgeColor = JUDGE_COLOR[judge];
-    this.judgeAlpha = 1;
+    this.judgeShownAt = nowSeconds();
   }
 
+  /** ヒット演出: ノーツの膨らむ残像＋広がる輪＋粒子。FEVER 中は金色で強める */
   private burst(lane: number, level: 0 | 1 | 2, fever: boolean): void {
     const lw = this.width / 4;
     const cx = lane * lw + lw / 2;
     const cy = this.height * HIT_Y_RATIO;
-    const c = fever ? '#ffd166' : LANE_COLORS[lane];
-    this.particles.push({ kind: 0, x: cx, y: cy, vx: 0, vy: 0, r: 10, a: 1, c });
-    const n = level === 0 ? 14 : level === 1 ? 9 : 5;
+    const c = fever ? GOLD : LANE_COLORS[lane];
+    this.pops.push({ lane, age: 0, life: POP_LIFE, c });
+    this.rings.push({ x: cx, y: cy, age: 0, life: RING_LIFE, maxR: fever ? 58 : 46, c });
+    const n = (level === 0 ? 22 : level === 1 ? 14 : 8) + (fever ? 6 : 0);
     for (let i = 0; i < n; i++) {
       const an = Math.random() * Math.PI * 2;
-      const sp = 2 + Math.random() * (level === 0 ? 6 : 4);
-      this.particles.push({ kind: 1, x: cx, y: cy, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp - 2, r: 0, a: 1, c });
+      const sp = 140 + Math.random() * (level === 0 ? 380 : 260);
+      this.particles.push({
+        x: cx,
+        y: cy,
+        vx: Math.cos(an) * sp,
+        vy: Math.sin(an) * sp - 70,
+        age: 0,
+        life: 0.35 + Math.random() * 0.2,
+        c,
+      });
     }
   }
 
@@ -248,7 +307,11 @@ export class Game {
     const { g } = this;
     const W = this.width;
     const H = this.height;
-    const nowSec = nowSeconds() - this.startAt;
+    const frameAt = nowSeconds();
+    // 経過時間（秒）。タブ復帰などで大きく飛んだときは 50ms に丸める
+    const dt = Math.min(0.05, Math.max(0, frameAt - this.lastFrameAt));
+    this.lastFrameAt = frameAt;
+    const nowSec = frameAt - this.startAt;
     const nowMs = nowSec * 1000;
     const fever = isFever(this.entry?.data.fever ?? [], nowSec);
     const fall = DIFFICULTIES[this.difficulty].fallSeconds;
@@ -281,7 +344,7 @@ export class Game {
       if (this.flash[i] > 0) {
         g.fillStyle = LANE_COLORS[i] + Math.round(this.flash[i] * 70).toString(16).padStart(2, '0');
         g.fillRect(i * lw, 0, lw, H);
-        this.flash[i] = Math.max(0, this.flash[i] - 0.06);
+        this.flash[i] = Math.max(0, this.flash[i] - dt * 3.6);
       }
       if (i) {
         g.fillStyle = 'rgba(255,255,255,.12)';
@@ -304,32 +367,69 @@ export class Game {
       g.roundRect(n.lane * lw + 8, y - 14, lw - 16, 28, 8);
       g.fill();
     }
-    for (const p of this.particles) {
-      if (p.kind === 0) {
-        p.r += 4.5;
-        p.a -= 0.05;
-        g.globalAlpha = Math.max(0, p.a);
-        g.strokeStyle = p.c;
-        g.lineWidth = 4;
-        g.beginPath();
-        g.arc(p.x, p.y, p.r, 0, 7);
-        g.stroke();
-      } else {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.25;
-        p.a -= 0.035;
-        g.globalAlpha = Math.max(0, p.a);
-        g.fillStyle = p.c;
-        g.fillRect(p.x - 2, p.y - 2, 4, 4);
-      }
+
+    // ---- ヒット演出（時間ベースで更新） ----
+    for (const p of this.pops) {
+      p.age += dt;
+      const k = p.age / p.life;
+      if (k >= 1) continue;
+      const scale = 1 + 0.5 * k;
+      const w = (lw - 16) * scale;
+      const h = 28 * scale;
+      g.globalAlpha = 0.75 * (1 - k);
+      g.fillStyle = p.c;
+      g.beginPath();
+      g.roundRect(p.lane * lw + lw / 2 - w / 2, hy - h / 2, w, h, 8);
+      g.fill();
     }
+    this.pops = this.pops.filter((p) => p.age < p.life);
     g.globalAlpha = 1;
-    this.particles = this.particles.filter((p) => p.a > 0);
+
+    for (const r of this.rings) {
+      r.age += dt;
+      const k = r.age / r.life;
+      if (k >= 1) continue;
+      const ease = 1 - (1 - k) * (1 - k);
+      g.globalAlpha = 0.9 * (1 - k);
+      g.strokeStyle = r.c;
+      g.lineWidth = 1 + 3.5 * (1 - k);
+      g.beginPath();
+      g.arc(r.x, r.y, 10 + (r.maxR - 10) * ease, 0, 7);
+      g.stroke();
+    }
+    this.rings = this.rings.filter((r) => r.age < r.life);
+    g.globalAlpha = 1;
+
+    for (const p of this.particles) {
+      p.age += dt;
+      if (p.age >= p.life) continue;
+      p.vy += 900 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      g.globalAlpha = 1 - p.age / p.life;
+      g.fillStyle = p.c;
+      g.fillRect(p.x - 2, p.y - 2, 4, 4);
+    }
+    this.particles = this.particles.filter((p) => p.age < p.life);
+    g.globalAlpha = 1;
+
+    for (const r of this.ripples) {
+      r.age += dt;
+      const k = r.age / r.life;
+      if (k >= 1) continue;
+      g.globalAlpha = 0.7 * (1 - k);
+      g.strokeStyle = r.c;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(r.x, r.y, 6 + 34 * k, 0, 7);
+      g.stroke();
+    }
+    this.ripples = this.ripples.filter((r) => r.age < r.life);
+    g.globalAlpha = 1;
 
     g.textAlign = 'center';
     if (fever) {
-      g.fillStyle = '#ffd166';
+      g.fillStyle = GOLD;
       g.font = 'bold 24px sans-serif';
       g.fillText('FEVER ×2', W / 2, 72);
     }
@@ -345,13 +445,17 @@ export class Game {
       g.font = '14px sans-serif';
       g.fillText('COMBO', W / 2, H * 0.3 + 22);
     }
-    if (this.judgeAlpha > 0) {
-      g.globalAlpha = this.judgeAlpha;
+    // 判定文字: 出た瞬間に大きく、縮みながらフェードする（経過時間ベース）
+    const judgeAge = frameAt - this.judgeShownAt;
+    if (this.judgeText && judgeAge < JUDGE_LIFE) {
+      const popK = Math.min(1, judgeAge / 0.12);
+      const scale = 1.35 - 0.35 * popK;
+      const alpha = judgeAge < 0.35 ? 1 : 1 - (judgeAge - 0.35) / (JUDGE_LIFE - 0.35);
+      g.globalAlpha = Math.max(0, alpha);
       g.fillStyle = this.judgeColor;
-      g.font = 'bold 26px sans-serif';
+      g.font = `bold ${Math.round(28 * scale)}px sans-serif`;
       g.fillText(this.judgeText, W / 2, H * 0.5);
       g.globalAlpha = 1;
-      this.judgeAlpha = Math.max(0, this.judgeAlpha - 0.03);
     }
     g.textAlign = 'left';
     g.fillStyle = '#fff';
@@ -361,7 +465,7 @@ export class Game {
     g.fillText(String(this.score).padStart(7, '0'), W - 14, 34);
     g.fillStyle = 'rgba(255,255,255,.2)';
     g.fillRect(0, 0, W, 3);
-    g.fillStyle = '#ffd166';
+    g.fillStyle = GOLD;
     g.fillRect(0, 0, W * Math.max(0, Math.min(1, nowSec / this.durationSec)), 3);
 
     if ((nowMs > this.durationSec * 1000 + 500 && this.notes.every((n) => n.state !== 0)) || nowMs > this.durationSec * 1000 + 2000) {

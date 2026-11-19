@@ -42,12 +42,74 @@ test('ゲームが始まり、Canvas が表示され、左上タップでメニ�
   await expect(page.locator('body')).toHaveAttribute('data-game', 'menu');
 });
 
-test('音のオン/オフを切り替えられる', async ({ page }) => {
+test('ヒーロー表示が、選んだ曲に切り替わる', async ({ page }) => {
   await page.goto('/');
-  const button = page.locator('#sound-button');
-  await expect(button).toHaveAttribute('aria-pressed', 'true');
-  await button.click();
-  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#hero-title')).toHaveText('石畳のハイウェイ');
+  await expect(page.locator('#hero-jacket')).toHaveAttribute('data-song', 'highway');
+  await expect(page.locator('#hero-bpm')).toContainText('BPM');
+
+  await page.locator('.song-card[data-song="night"]').click();
+  await expect(page.locator('#hero-title')).toHaveText('Kiso Night Silhouette');
+  await expect(page.locator('#hero-jacket')).toHaveAttribute('data-song', 'night');
+  await expect(page.locator('#hero-album')).toHaveText('Silver Screen Ascent');
+});
+
+test('効果音と振動のオン/オフが切り替わり、保存される', async ({ page }) => {
+  await page.goto('/');
+  const sound = page.locator('#sound-button');
+  await expect(sound).toHaveAttribute('aria-pressed', 'true');
+  await expect(sound.locator('.toggle-state')).toHaveText('オン');
+  await sound.click();
+  await expect(sound).toHaveAttribute('aria-pressed', 'false');
+  await expect(sound.locator('.toggle-state')).toHaveText('オフ');
+
+  const vibrate = page.locator('#vibrate-button');
+  await expect(vibrate).toHaveAttribute('aria-pressed', 'true');
+  await vibrate.click();
+  await expect(vibrate).toHaveAttribute('aria-pressed', 'false');
+
+  // 保存されている（開き直しても戻らない）
+  await page.reload();
+  await expect(page.locator('#sound-button')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#vibrate-button')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('body')).toHaveAttribute('data-sound', 'off');
+  await expect(page.locator('body')).toHaveAttribute('data-vibrate', 'off');
+});
+
+// 実時間のタイミングに依存するテストなので、並行実行で負荷がかかると揺れる。リトライを許可する
+test.describe('ヒット判定（実時間）', () => {
+  test.describe.configure({ retries: 2 });
+
+  test('ノーツに当たるとスコアが入り、ヒット音のイベントが出る', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => {
+      const w = window as unknown as { __sounds: unknown[] };
+      w.__sounds = [];
+      document.addEventListener('app:sound', (e) => w.__sounds.push((e as CustomEvent).detail));
+    });
+    await page.getByRole('button', { name: 'スタート' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+    // ページの中で 4 レーンのキーを順に押し続ける（CDP 経由の実時間合わせは負荷でずれるため）。
+    // 各レーンは 240ms ごとに押され、判定窓（±160ms）の中に必ず入る
+    await page.evaluate(() => {
+      const w = window as unknown as { __spam?: number };
+      const keys = ['d', 'f', 'j', 'k'];
+      let i = 0;
+      w.__spam = window.setInterval(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: keys[i++ % keys.length] }));
+      }, 60);
+    });
+    try {
+      await expect(page.locator('body')).not.toHaveAttribute('data-score', '0', { timeout: 25_000 });
+    } finally {
+      await page.evaluate(() => {
+        const w = window as unknown as { __spam?: number };
+        if (w.__spam) window.clearInterval(w.__spam);
+      });
+    }
+    const sounds = await page.evaluate(() => (window as unknown as { __sounds: unknown[] }).__sounds);
+    expect(sounds.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 test('manifest と Service Worker が使える', async ({ page }) => {

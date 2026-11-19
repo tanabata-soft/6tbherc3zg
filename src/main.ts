@@ -5,7 +5,8 @@ import { Game, type GameResult } from './game';
 import { exposeTestApi, setData, setupDebug } from './debug';
 import { setupInstallGuide } from './install';
 import { setupUpdateBanner } from './pwa';
-import { isSoundOn, setSound } from './sound';
+import { isSoundOn, reloadSound, setSound } from './sound';
+import { isVibrateOn, reloadVibrate, setVibrate } from './haptics';
 import { exportBackup, importBackup, load, migrateStorage, requestPersist, save } from './storage';
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -46,20 +47,14 @@ for (const entry of SONGS) {
   b.type = 'button';
   b.className = 'song-card';
   b.dataset.song = entry.id;
+  b.setAttribute('aria-label', entry.data.title);
   const img = document.createElement('img');
   img.src = entry.jacketUrl;
   img.alt = '';
-  const meta = document.createElement('span');
-  meta.className = 'song-meta';
   const title = document.createElement('span');
-  title.className = 'song-title';
+  title.className = 'song-thumb-title';
   title.textContent = entry.data.title;
-  const sub = document.createElement('span');
-  sub.className = 'song-sub';
-  const sec = Math.round(entry.data.durationMs / 1000);
-  sub.textContent = `${entry.album}／${entry.genre}／BPM ${Math.round(entry.data.bpm)}／${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-  meta.append(title, document.createElement('br'), sub);
-  b.append(img, meta);
+  b.append(img, title);
   b.addEventListener('click', () => {
     selectedSong = entry.id;
     save('song', selectedSong);
@@ -78,17 +73,35 @@ for (const b of diffButtons) {
   });
 }
 
+function renderToggle(id: string, on: boolean): void {
+  const button = $(id);
+  button.setAttribute('aria-pressed', String(on));
+  const state = button.querySelector('.toggle-state');
+  if (state) state.textContent = on ? 'オン' : 'オフ';
+}
+
 function renderMenu(): void {
   for (const [id, b] of songButtons) b.setAttribute('aria-pressed', String(id === selectedSong));
   for (const b of diffButtons) b.setAttribute('aria-pressed', String(b.dataset.diff === selectedDiff));
+  // ヒーロー表示を選択中の曲に合わせる（ジャケットの切り取り位置は曲ごとに CSS で指定）
+  const entry = songById(selectedSong);
+  const heroJacket = $<HTMLImageElement>('hero-jacket');
+  heroJacket.src = entry.jacketUrl;
+  heroJacket.dataset.song = entry.id;
+  $('hero-title').textContent = entry.data.title;
+  $('hero-album').textContent = entry.album;
+  $('hero-bpm').textContent = `BPM ${Math.round(entry.data.bpm)}`;
+  const sec = Math.round(entry.data.durationMs / 1000);
+  $('hero-length').textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
   $('menu-best').textContent = String(bestOf(selectedSong, selectedDiff));
   $('offset-value').textContent = `${offsetMs > 0 ? '+' : ''}${offsetMs}ms`;
-  const sound = $('sound-button');
-  sound.textContent = isSoundOn() ? '🔊' : '🔇';
-  sound.setAttribute('aria-pressed', String(isSoundOn()));
+  renderToggle('sound-button', isSoundOn());
+  renderToggle('vibrate-button', isVibrateOn());
   setData('song', selectedSong);
   setData('difficulty', selectedDiff);
   setData('offset', offsetMs);
+  setData('sound', isSoundOn() ? 'on' : 'off');
+  setData('vibrate', isVibrateOn() ? 'on' : 'off');
 }
 
 function setOffset(next: number): void {
@@ -100,6 +113,10 @@ $('offset-minus').addEventListener('click', () => setOffset(offsetMs - 10));
 $('offset-plus').addEventListener('click', () => setOffset(offsetMs + 10));
 $('sound-button').addEventListener('click', () => {
   setSound(!isSoundOn());
+  renderMenu();
+});
+$('vibrate-button').addEventListener('click', () => {
+  setVibrate(!isVibrateOn());
   renderMenu();
 });
 
@@ -182,6 +199,8 @@ $<HTMLInputElement>('backup-import').addEventListener('change', async (e) => {
     offsetMs = clampOffset(load<number>('offset', 0));
     selectedSong = load<SongId>('song', 'highway');
     selectedDiff = load<Difficulty>('difficulty', 'easy');
+    reloadSound();
+    reloadVibrate();
     renderMenu();
     message.textContent = `${n} 件の記録を読み込みました`;
   } catch (err) {
@@ -201,7 +220,15 @@ setupDebug($('debug-panel'), $('version-line'), [
 ]);
 // テスト用の入口（?debug=1 のときだけ出る）
 exposeTestApi({
-  getState: () => ({ screen, song: selectedSong, difficulty: selectedDiff, offset: offsetMs, playing: game.isPlaying }),
+  getState: () => ({
+    screen,
+    song: selectedSong,
+    difficulty: selectedDiff,
+    offset: offsetMs,
+    playing: game.isPlaying,
+    sound: isSoundOn(),
+    vibrate: isVibrateOn(),
+  }),
   setState: (patch) => {
     if (typeof patch.song === 'string' && SONGS.some((s) => s.id === patch.song)) selectedSong = patch.song as SongId;
     if (typeof patch.difficulty === 'string' && patch.difficulty in DIFFICULTIES) selectedDiff = patch.difficulty as Difficulty;
