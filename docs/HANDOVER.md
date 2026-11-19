@@ -2,7 +2,7 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.9.4（実装・検証済み。公開は VM 書き込み障害のため未実施。v1.9.4 の節の末尾参照）
+更新: 2026-11-19・版 v1.9.5
 
 ## 今の状態
 
@@ -18,7 +18,17 @@
   - **タイミング構成**: 滞在 2.8 秒（`main.ts` の `FULLCOMBO_SHOW_MS`。CSS の fullcombo-fade / fullcombo-zoom も 2.8 秒で一致させること）。絵は100コンボの big 登場と同じゴーストライダー（`src/assets/cage-ghostrider.webp`）を全面 cover で敷き、ゆっくり寄る（scale 1.0→1.09）。下部の暗いグラデーションの上に金の「FULL COMBO」（0.12 秒遅れで弾けて出る）＋最大コンボ数。タップ（pointerdown）でスキップして結果へ進める。
   - **ボイス**: `src/assets/fullcombo-voice.mp3`（オーナーが候補 A〜E から選んだ A案。Gemini TTS の男性声 Charon で生成した自作音声、1.61 秒。試聴用ファイル `~/workspace/your_files/fc-voice-a.mp3` と同一）。`src/sound.ts` の `playFullComboVoice` が曲と同じ `loadBuffer` 経路で読み、マスターへ直接つないで鳴らす（合成音でない音声ファイルはこの1本だけが例外）。演奏開始時に `preloadFullComboVoice` で先読みする。**効果音のオン/オフ設定には従わない**（ボイスは効果音ではなく演奏の締めの演出そのもの、という位置づけ。遅延チェックの拍クリックと同じ考え方）。発火は `app:sound` の kind `fullcombo`。
   - **オートプレイ時も演出は通常演奏と同じに出す**（常時フルコンボになるため）。結果の保存ルールは不変（オートプレイ結果はベストスコアに保存しない。`showResult` 側の従来処理）。`scripts/verify-autoplay-full.mjs` は演出が出たらタップでスキップしてから結果を読むよう追随済み。テスト入口（`__pwaTest`）に `finishNow`（プレイ中ならいまの成績で結果へ進む。デバッグパネルの「結果へ」と同じ）を追加し、E2E・shots が使う。E2E の新規2件: 「フルコンボで終えると演出（ボイスつき）が出て、放っておいても結果画面へ進む」「ミスがあるとフルコンボ演出は出ず、結果画面へ直行する」（後者は実時間依存のため retries 2 の describe 内）。`scripts/shots.mjs` に fullcombo 画面を追加（全28枚）。
-  - **公開ステータス（2026-11-19 時点）**: 実装・verify（単体127件）・E2E（30件）は完了したが、VM の書き込み障害（EPERM が継続し、プロセスからの内容書き込みが全面的に失敗する）ため、shots の撮影・単体プレビュー（build:preview）の作り直し・コミット/push・公開確認が未実施。作業ツリーに v1.9.4 の変更一式が未コミットで残っている。回復後に「`npm run shots` で演出画面を確認 → `npm run build:preview` → コミット → push → CI（test/pages）と公開URLで 1.9.4 を確認」の順で仕上げること。
+  - **公開ステータス**: 当初は VM の書き込み障害（EPERM）のため shots・単体プレビュー・コミット/push・公開確認が止まっていたが、回復後にすべて完了し、v1.9.4 として公開済み。
+- v1.9.5 の変更:
+  - **ヒット音をオーナー支給クラップに差し替え**（オーナー指示）。正本は `src/sound.ts` の `CLAP_HIT` / `clapToneFor(judge, tier)` と素材 `src/assets/hit-clap.wav`（モノラル 44.1kHz・0.12秒・ピーク 0.9。支給元 `~/workspace/user/files/rhythm_se_crisp_clap.wav` とバイト単位で同一）。**MP3 化しなかった理由**: エンコーダ遅延（数十ms 級）でアタックがずれうるため。WAV は無遅延でデコードでき、10.6KB と小さい。precache 対象に `wav` を追加済み（vite.config.ts の globPatterns）。判定別: PERFECT peak 0.5・素材全長・ローパス 9500Hz／GREAT 0.42・0.10秒・8000Hz／GOOD 0.32・0.075秒・5200Hz。素材より短く切るときは末尾 8ms のフェード（playClap）。**tier はピッチではなく明るさ**: ローパス ×(1 + 0.15 × tier)（上限 tier 4。`CLAP_TIER_BRIGHTNESS` / `tierBrightness`）。F案の `HIT_BLIP` / `hitToneFor` はヒット音では使わなくなった（logic.ts の `hitPitchMultiplier` は完走音が今も使うので残置）。
+  - **長押し連打もクラップに統一**: `CLAP_HOLD`（0.24・0.06秒・7500Hz）＋ `holdClapFor(tier, progress)`。間隔・先行スケジュール（HOLD_STREAM の timer / lookahead）・開始/停止条件は v1.8.3 のまま。進行の変化はピッチ上昇（旧 HOLD_BLIP の +2 半音）から明るさ（最大 ×1.5、`HOLD_CLAP_RISE`）へ。完走音（COMPLETE_BLIP）・失敗音（FAIL_BLIP）・空タップ音（EMPTY_BLIP）は合成ブリップのまま据え置き（役割の違う小さな音で、playBlip / blipTone 系はこの3種のために残っている）。
+  - **素材の読み込み**: `loadClap()` が既存の `loadBuffer` 経由で読み、`clapBuf` に解決済みバッファを持つ（連打の先行スケジュールで同期待ちなしに使うため）。演奏開始時に main.ts の startGame が `preloadHitClap()` で先読みする（フルコンボボイスと同じ扱い）。未読込の間に当たった1発は鳴らさない（通常は起きない）。
+  - **app:sound の detail 変更**: hit は { kind, judge, tier }、hold-hit / hold-start は { kind, tier }（frequency を外した）。complete / fail は frequency 付きのまま。E2E は kind で確認するため無変更で全通過した。
+  - **演奏画面の背景を縦長切り抜きに統一**（オーナー指示「そろえて」）。`game.ts` の `drawJacketBackground` を書き換え、v1.9.1 の「全体収まり＋ぼかし下敷き」（JACKET_BLUR_SIZE / bgBlur）は廃止。基本形: ソース矩形のアスペクトを画面に合わせた cover 切り抜きを全面に描き、切り取る位置は `charts.ts` の `SongEntry.bgCrop`（{ x, y, titleWidth? }）で曲ごとに決める（カルーセルの object-position と同じ知見: highway {0, 0, titleWidth .68}／night {0, 1, titleWidth .76}／gospel {0.35, 0.5}（主役の男性が横 0.13〜0.68 にいるため）／kira {0.5, 0.5}）。
+  - **タイトルが切れる2曲だけの対処（ポスター層）**: highway のタイトルは横 0.02〜0.64、night は 0.02〜0.72（画像実測）。縦長画面の cover 窓は幅約 0.46（phone 390×844）しかなく、寄せだけでは収まらない。そこで titleWidth を持つ曲は、下地の cover を rgba(6,8,16,.5) で暗くしたうえに、titleWidth の幅の窓（全高）を画面の横幅いっぱいに敷き（縦位置は bgCrop.y: highway 上端／night 下端）、内側の端を最大 170px のグラデーション（rgba(8,10,20, 0→.94)）で下地へ溶かす。ベール（通常 .62 / FEVER .35）は従来どおり背景の後に描かれる。ケージ背景は変更なし。
+  - shots に game-night / game-kira を追加（全36枚）。phone / SE の両サイズで全4曲の演奏画面を目視し、タイトルが切れていないことを確認済み（判定ラインや歌詞がタイトルに重なるのは演奏中表示としての重なりで、切り抜きの切れではない）。
+  - 譜面・楽曲・遅延チェック・フルコンボ演出は変更なし。検証: verify 全通過（単体127件）、E2E 30件全通過（リトライなし）。単体プレビュー約 16.2MB。
+  - 実機確認をお願いしたい点: クラップの音量バランス（基準 PERFECT 0.5）と連打の聞こえ方、背景ポスター層の継ぎ目の見え方。
 - v1.9.3 の変更:
   - **新曲2曲を追加**（最初の単体HTML `~/workspace/user/files/kiso-rhythm-game_0_1l6e.html` の埋め込み音源から）: 『谷底にも朝が来る』（gospel、BPM 146、編集版 125.5秒）と『キラキラ木曽旅』（kira、BPM 150、編集版 118.2秒）。音源は埋め込み MP4（Opus＋mov_text 字幕）を抽出して MP3 192kbps 化。全長（263.3秒／211.6秒）は `assets-full/` に保管し、ゲーム用は v1.6.0 と同じ方針のショート編集（谷底＝サビ1終わりの小節頭 125.50秒まで、キラキラ＝2番終わりの小節頭 118.24秒まで＋終端フェード1.6秒）。ジャケットは元HTMLの `IMG` にあった 720×720 の絵（両曲とも文字なし）を抽出してそのまま使用。歌詞も字幕から抽出（谷底 15行／キラキラ 23行。`scripts/extract-lyrics.py` に単体HTML由来の経路を追加し、セクション注記・掛け声の0秒キューは行にしない）。
   - **FEVER の決め方**: 元HTMLの `FEVER` 定数はサビ位置と対応しない（サビ1が区間外）ため不採用。字幕のサビ特定＋小節ごとの RMS の既存手順で決めた: 谷底 [100,124]、キラキラ [64,90]。全長版のサビ区間は `assets-full/README.md` に記録。
