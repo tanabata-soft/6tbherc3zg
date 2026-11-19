@@ -53,6 +53,68 @@ export function clampOffset(ms: number): number {
   return Math.min(OFFSET_MAX, Math.max(OFFSET_MIN, stepped));
 }
 
+// ---- 遅延チェック（拍に合わせてタップし、タイミングのずれを実測する） ----
+// 端末やイヤホンの遅延で「タップが拍より遅れる」量を測り、オフセットへ反映する。
+// 符号の約束: ズレ = タップ時刻 − 最寄りの拍の時刻（+ は拍より遅れてタップした）。
+// ゲーム側のオフセットは makePlayNotes でノーツの判定時刻を +offsetMs だけ後ろへ
+// ずらすので、「遅れてタップする量（+）」をそのままオフセットにすれば打ち消せる
+// （手動調整の注記「ノーツが遅れて感じる → ＋」とも一致する）。
+
+/** 遅延チェックの拍の速さ (BPM)。1拍 1000ms で、落ち着いて合わせられる速さにする */
+export const LATENCY_BPM = 60;
+/** 必要なタップ回数 */
+export const LATENCY_TAP_COUNT = 10;
+/** 練習として捨てる最初のタップ回数 */
+export const LATENCY_DROP_COUNT = 2;
+/** 直前のタップからこの間隔 (ms) 未満のタップは、二度押しとして数えない */
+export const LATENCY_MIN_TAP_GAP_MS = 200;
+
+/** 拍の間隔 (ms) */
+export function latencyIntervalMs(): number {
+  return 60000 / LATENCY_BPM;
+}
+
+/** 近すぎるタップ（二度押し・ボタンの跳ね返り）を除く。時刻は昇順の前提 */
+export function filterTapTimes(tapTimesMs: readonly number[], minGapMs = LATENCY_MIN_TAP_GAP_MS): number[] {
+  const kept: number[] = [];
+  for (const t of tapTimesMs) {
+    if (kept.length === 0 || t - kept[kept.length - 1] >= minGapMs) kept.push(t);
+  }
+  return kept;
+}
+
+/**
+ * タップ時刻（拍と同じ時計の ms）の列から、各タップと最寄りの拍とのズレ（符号付き ms）を返す。
+ * startMs は最初の拍の時刻、intervalMs は拍の間隔。
+ */
+export function latencyDeltas(tapTimesMs: readonly number[], startMs: number, intervalMs: number): number[] {
+  return tapTimesMs.map((t) => {
+    const beatIndex = Math.round((t - startMs) / intervalMs);
+    return t - (startMs + beatIndex * intervalMs);
+  });
+}
+
+export interface LatencyStats {
+  /** 平均のズレ (ms)。+ は拍より遅れてタップしている */
+  meanMs: number;
+  /** ばらつき（標準偏差、ms） */
+  stddevMs: number;
+  /** 計算に使ったタップ数 */
+  usedCount: number;
+}
+
+/**
+ * ズレの列から、最初の drop 件を練習として捨てて平均と標準偏差を出す。
+ * 捨てたあとに残りがなければ null。
+ */
+export function latencyStats(deltasMs: readonly number[], drop = LATENCY_DROP_COUNT): LatencyStats | null {
+  const used = deltasMs.slice(Math.max(0, drop));
+  if (used.length === 0) return null;
+  const mean = used.reduce((s, d) => s + d, 0) / used.length;
+  const variance = used.reduce((s, d) => s + (d - mean) * (d - mean), 0) / used.length;
+  return { meanMs: mean, stddevMs: Math.sqrt(variance), usedCount: used.length };
+}
+
 /** ズレ (ms, 符号なし) から判定を返す。窓の外は null（ノーツを消費しない） */
 export function judgeFor(absDeltaMs: number): Exclude<Judge, 'miss'> | null {
   if (absDeltaMs <= JUDGE_WINDOWS.perfect) return 'perfect';

@@ -5,8 +5,10 @@ import {
   type CageAppearance,
   type CagePattern,
   type Difficulty,
+  type LatencyStats,
   type SongId,
 } from './logic';
+import { LatencyCheck } from './latency';
 import { SONGS, songById, type SongEntry } from './charts';
 import { Game, type GameResult } from './game';
 import { exposeTestApi, setData, setupDebug } from './debug';
@@ -180,6 +182,94 @@ settingsDialog.addEventListener('close', () => {
   document.body.classList.remove('dialog-open');
 });
 
+// ---- 遅延チェック（設定モーダルから開く。拍に合わせてタップし、ずれを測る） ----
+const latencyDialog = $<HTMLDialogElement>('latency-dialog');
+type LatencyUi = 'idle' | 'running' | 'done';
+let latencyUi: LatencyUi = 'idle';
+let latencyResult: LatencyStats | null = null;
+const latencyCheck = new LatencyCheck({
+  onBeat: () => {
+    const flash = $('latency-flash');
+    flash.classList.add('on');
+    window.setTimeout(() => flash.classList.remove('on'), 140);
+  },
+  onProgress: (taps, needed) => {
+    if (latencyUi === 'running') $('latency-status').textContent = `タップ ${taps} / ${needed}`;
+  },
+  onFinish: (stats) => {
+    latencyResult = stats;
+    latencyUi = 'done';
+    renderLatency();
+  },
+});
+
+function renderLatency(): void {
+  setData('latency', latencyUi);
+  const start = $<HTMLButtonElement>('latency-start');
+  const tap = $<HTMLButtonElement>('latency-tap');
+  if (latencyUi === 'idle') {
+    $('latency-status').textContent = '「スタート」を押すと拍が流れます';
+    $('latency-result').hidden = true;
+    tap.disabled = true;
+    start.disabled = false;
+    start.textContent = 'スタート';
+  } else if (latencyUi === 'running') {
+    $('latency-result').hidden = true;
+    tap.disabled = false;
+    start.disabled = true;
+  } else {
+    if (latencyResult) {
+      const mean = Math.round(latencyResult.meanMs);
+      $('latency-mean').textContent = `${mean > 0 ? '+' : ''}${mean}ms`;
+      $('latency-std').textContent = String(Math.round(latencyResult.stddevMs));
+    }
+    $('latency-status').textContent = '計測が終わりました';
+    $('latency-result').hidden = false;
+    tap.disabled = true;
+    start.disabled = false;
+    start.textContent = 'もう一度測る';
+  }
+}
+
+function openLatency(): void {
+  latencyCheck.stop();
+  latencyUi = 'idle';
+  latencyResult = null;
+  renderLatency();
+  if (!latencyDialog.open) latencyDialog.showModal();
+}
+function closeLatency(): void {
+  latencyCheck.stop();
+  if (latencyDialog.open) latencyDialog.close();
+}
+$('latency-open').addEventListener('click', openLatency);
+$('latency-close').addEventListener('click', closeLatency);
+$('latency-cancel').addEventListener('click', closeLatency);
+latencyDialog.addEventListener('close', () => {
+  // Esc・✕・「やめる」で閉じた場合も、計測を止めて何も反映しない
+  latencyCheck.stop();
+  latencyUi = 'idle';
+  latencyResult = null;
+  renderLatency();
+});
+$('latency-start').addEventListener('click', () => {
+  unlockAudio();
+  latencyUi = 'running';
+  latencyResult = null;
+  renderLatency();
+  latencyCheck.start();
+});
+// タップは pointerdown で受ける（click より遅延が小さい。ゲーム本体の入力と同じ方式）
+$('latency-tap').addEventListener('pointerdown', () => latencyCheck.tap());
+$('latency-apply').addEventListener('click', () => {
+  if (!latencyResult) return;
+  // 符号は logic.ts の遅延チェックの約束どおり: 拍より遅れてタップした量（+）を
+  // そのままオフセットにする（ノーツの判定時刻が後ろへずれて、遅れを打ち消せる）
+  setOffset(Math.round(latencyResult.meanMs));
+  closeLatency();
+});
+renderLatency();
+
 // ---- ケージ登場（30コンボごと）と歌詞表示 ----
 // 絵は game.ts が Canvas の背景として薄く描く。ここではセリフとコンボ数の表示だけを担当する
 /** パターンごとのセリフ（モチーフに寄せた汎用的な熱いセリフ。映画の台詞の直引用はしない） */
@@ -346,6 +436,7 @@ exposeTestApi({
     lyrics: lyricsOn,
     debugMode: debugModeOn,
     autoplay: autoplayOn,
+    latency: latencyUi,
     gameAutoplay: game.isAutoplay,
     audioUnlocked: isUnlocked(),
     audioState: audioState(),

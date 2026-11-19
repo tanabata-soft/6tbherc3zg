@@ -294,6 +294,34 @@ export function playFailSound(): void {
   }
 }
 
+/** 遅延チェックの拍クリック。拍の瞬間がはっきり分かる、短く明るい1音 */
+export const LATENCY_CLICK = { freq: 2000, durSec: 0.03, decaySec: 0.02, peak: 0.18 } as const;
+
+/**
+ * 遅延チェックの拍クリックを、指定した AudioContext 時刻に鳴らす。
+ * 効果音のオン/オフ設定には従わない: 遅延チェックは「音に合わせてタップする」のが
+ * 計測の前提で、鳴るのは利用者が計測のスタートを押したときだけだからである
+ * （光だけでは、ゲームで実際に効く音の遅れを測れない）。
+ * 拍の予定時刻は app:sound（kind: 'latency'、detail.at が AudioContext 時刻）でも出す。
+ */
+export function playLatencyClickAt(whenSec: number): void {
+  try {
+    const ac = audioContext();
+    const osc = ac.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = LATENCY_CLICK.freq;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(LATENCY_CLICK.peak, whenSec);
+    gain.gain.exponentialRampToValueAtTime(0.0001, whenSec + LATENCY_CLICK.durSec + LATENCY_CLICK.decaySec);
+    osc.connect(gain).connect(hitBus());
+    osc.start(whenSec);
+    osc.stop(whenSec + LATENCY_CLICK.durSec + LATENCY_CLICK.decaySec + 0.02);
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'latency', at: whenSec } }));
+  } catch {
+    // 音が出せなくても続行する
+  }
+}
+
 /** 空タップ音。ノーツのないレーンを押したときに鳴らす（ヒット音とは別の小さな音） */
 export function playEmptySound(): void {
   if (!enabled) return;

@@ -3,6 +3,13 @@ import {
   accuracy,
   clampOffset,
   emptyCounts,
+  filterTapTimes,
+  latencyDeltas,
+  latencyIntervalMs,
+  latencyStats,
+  LATENCY_BPM,
+  LATENCY_DROP_COUNT,
+  LATENCY_TAP_COUNT,
   findHit,
   isFever,
   judgeFor,
@@ -72,6 +79,50 @@ describe('clampOffset', () => {
     expect(clampOffset(-999)).toBe(-200);
     expect(clampOffset(14)).toBe(10);
     expect(clampOffset(16)).toBe(20);
+  });
+});
+
+describe('遅延チェック（latency）', () => {
+  it('拍は BPM 60 で間隔 1000ms、必要回数と練習として捨てる回数が決まっている', () => {
+    expect(LATENCY_BPM).toBe(60);
+    expect(latencyIntervalMs()).toBe(1000);
+    expect(LATENCY_TAP_COUNT).toBe(10);
+    expect(LATENCY_DROP_COUNT).toBe(2);
+  });
+
+  it('latencyDeltas は最寄りの拍とのズレ（符号付き）を返す', () => {
+    // 拍は 1000ms から 1000ms 間隔。タップが遅れれば +、早ければ −
+    expect(latencyDeltas([1000, 2080, 2920, 4499], 1000, 1000)).toEqual([0, 80, -80, 499]);
+    // 拍のちょうど中間のタップは、近い方（この場合は前の拍）へ寄せる
+    expect(latencyDeltas([1499], 1000, 1000)).toEqual([499]);
+    expect(latencyDeltas([1501], 1000, 1000)).toEqual([-499]);
+  });
+
+  it('filterTapTimes は近すぎるタップ（二度押し）を除く', () => {
+    expect(filterTapTimes([1000, 1050, 1300, 1310, 2000])).toEqual([1000, 1300, 2000]);
+    expect(filterTapTimes([])).toEqual([]);
+  });
+
+  it('latencyStats は最初の2件を捨てて平均と標準偏差を出す', () => {
+    // 捨てる2件（大きなズレ）が平均に入らないこと
+    const stats = latencyStats([300, -300, 40, 60, 50, 50]);
+    expect(stats?.usedCount).toBe(4);
+    expect(stats?.meanMs).toBe(50);
+    expect(stats?.stddevMs).toBeCloseTo(Math.sqrt(50), 10);
+  });
+
+  it('latencyStats は、捨てたあとに残りがなければ null', () => {
+    expect(latencyStats([])).toBeNull();
+    expect(latencyStats([10, 20])).toBeNull();
+    expect(latencyStats([10, 20, 30])?.usedCount).toBe(1);
+  });
+
+  it('測った平均は、そのままオフセットにできる符号になっている', () => {
+    // 拍より平均 +80ms 遅れてタップする人の計測 → オフセット +80（10ms刻みに丸めても +）
+    const taps = [1000, 2000, 3080, 4080, 5080, 6080, 7080, 8080, 9080, 10080];
+    const stats = latencyStats(latencyDeltas(taps, 1000, latencyIntervalMs()));
+    expect(stats?.meanMs).toBe(80);
+    expect(clampOffset(Math.round(stats?.meanMs ?? 0))).toBe(80);
   });
 });
 

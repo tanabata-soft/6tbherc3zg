@@ -731,6 +731,61 @@ body.dialog-open {
   margin: 16px 0 0;
 }
 
+/* 遅延チェックの画面（設定モーダルの上に重ねて開く） */
+.latency-flash {
+  width: 96px;
+  height: 96px;
+  margin: 18px auto 6px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface-2);
+}
+
+.latency-flash.on {
+  background: var(--gold);
+  border-color: var(--gold);
+  box-shadow: 0 0 36px rgb(255 209 102 / 0.8);
+}
+
+.latency-status {
+  text-align: center;
+  color: var(--muted);
+  margin: 8px 0;
+}
+
+.latency-tap {
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  margin: 10px 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  border-radius: 16px;
+}
+
+.latency-result {
+  text-align: center;
+  margin: 10px 0;
+}
+
+.latency-result-text {
+  margin: 6px 0 10px;
+}
+
+.latency-apply {
+  width: 100%;
+  min-height: 48px;
+}
+
+.latency-actions {
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.latency-actions .opt {
+  flex: 1;
+}
+
 /* インストール方法のダイアログ */
 .install-dialog {
   width: min(448px, calc(100vw - 32px));

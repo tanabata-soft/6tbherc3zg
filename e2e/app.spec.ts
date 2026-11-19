@@ -16,7 +16,7 @@ async function openSettings(page: import('@playwright/test').Page): Promise<void
 
 test('メニューが表示され、曲と難易度を選べる', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'キソケイジビート' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'キソ・ケイジ・ビート' })).toBeVisible();
   await expect(page.getByText('ニコラスケイジと木曽と私')).toBeVisible();
   await expect(page.locator('.song-card')).toHaveCount(2);
   await expect(page.locator('body')).toHaveAttribute('data-song', 'highway');
@@ -71,6 +71,53 @@ test('オフセット調整が保存される', async ({ page }) => {
   await expect(page.locator('#offset-value')).toHaveText('+20ms');
   await page.getByRole('button', { name: 'オフセットを10ms減らす' }).click();
   await expect(page.locator('#offset-value')).toHaveText('+10ms');
+});
+
+test('遅延チェックで測って、オフセットに反映できる', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto('/?debug=1');
+  await openSettings(page);
+  await expect(page.locator('#offset-value')).toHaveText('0ms');
+  await page.locator('#latency-open').click();
+  const dialog = page.locator('#latency-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('body')).toHaveAttribute('data-latency', 'idle');
+  await page.locator('#latency-start').click();
+  await expect(page.locator('body')).toHaveAttribute('data-latency', 'running');
+  // 拍（1秒間隔）にだいたい合わせて10回タップする
+  for (let i = 0; i < 10; i++) {
+    await page.waitForTimeout(1000);
+    await page.locator('#latency-tap').click();
+  }
+  await expect(page.locator('body')).toHaveAttribute('data-latency', 'done');
+  await expect(page.locator('#latency-result')).toBeVisible();
+  const mean = Number.parseInt((await page.locator('#latency-mean').textContent()) ?? '0', 10);
+  // 反映後のオフセットは、測った平均を clampOffset（±200ms・10ms刻み）したものと一致する
+  const expected = Math.min(200, Math.max(-200, Math.round(mean / 10) * 10));
+  await page.locator('#latency-apply').click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('#offset-value')).toHaveText(`${expected > 0 ? '+' : ''}${expected}ms`);
+  // 保存もされている（開き直しても同じオフセット）
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __appStarted?: boolean }).__appStarted === true);
+  const state = await page.evaluate(
+    () => (window as unknown as { __pwaTest: { getState(): { offset: number } } }).__pwaTest.getState(),
+  );
+  expect(state.offset).toBe(expected);
+});
+
+test('遅延チェックを途中でやめると、オフセットは変わらない', async ({ page }) => {
+  await page.goto('/');
+  await openSettings(page);
+  await page.locator('#latency-open').click();
+  await page.locator('#latency-start').click();
+  await expect(page.locator('body')).toHaveAttribute('data-latency', 'running');
+  await page.waitForTimeout(1100);
+  await page.locator('#latency-tap').click();
+  await page.locator('#latency-cancel').click();
+  await expect(page.locator('#latency-dialog')).toBeHidden();
+  await expect(page.locator('body')).toHaveAttribute('data-latency', 'idle');
+  await expect(page.locator('#offset-value')).toHaveText('0ms');
 });
 
 test('ゲームが始まり、Canvas が表示され、左上タップでメニューに戻る', async ({ page }) => {

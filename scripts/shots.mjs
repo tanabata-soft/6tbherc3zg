@@ -17,6 +17,18 @@ const SCREENS = [
       await page.click('#settings-open');
     },
   },
+  {
+    // 遅延チェックの計測画面（設定モーダルから開き、スタートを押したあと）
+    name: 'latency',
+    open: async (page) => {
+      await page.locator('#settings-open').scrollIntoViewIfNeeded();
+      await page.click('#settings-open');
+      await page.click('#latency-open');
+      await page.click('#latency-start');
+      // 最初の拍（スタートの1秒後）の少しあとに撮る
+      await page.waitForTimeout(1300);
+    },
+  },
   { name: 'install', open: async (page) => page.click('#install-open') },
   {
     name: 'game',
