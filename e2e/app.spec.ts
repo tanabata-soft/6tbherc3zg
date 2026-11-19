@@ -172,6 +172,39 @@ test.describe('ヒット判定（実時間）', () => {
     const sounds = await page.evaluate(() => (window as unknown as { __sounds: unknown[] }).__sounds);
     expect(sounds.length).toBeGreaterThanOrEqual(1);
   });
+
+  test('長押しを押し続けると完走する', async ({ page }) => {
+    // 最初の長押し（石畳のハイウェイ／かんたん）を譜面データから取る
+    const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8')) as {
+      highway: { charts: { easy: [number, number, number?][] } };
+    };
+    const first = charts.highway.charts.easy.find((n) => (n[2] ?? 0) > 0);
+    if (!first) throw new Error('長押しが譜面にありません');
+    const hold = { t: first[0], lane: first[1] };
+    await page.goto('/');
+    // playing になった瞬間を起点に、頭の前後でキーを繰り返し押して押し続ける（keyup しない）。
+    // 曲の時刻は playing の 2 秒後（READY）から進む前提。音声の開始が遅れても
+    // 判定窓（±160ms）にどれか1回が入るよう、頭の 300ms 前〜900ms 後まで 100ms ごとに送る
+    // （長押し中は同じレーンに他のノーツがないので、余分な押下は無害）。
+    await page.evaluate((h) => {
+      const key = ['d', 'f', 'j', 'k'][h.lane];
+      const obs = new MutationObserver(() => {
+        if (document.body.dataset.game === 'playing') {
+          obs.disconnect();
+          window.setTimeout(() => {
+            let n = 0;
+            const iv = window.setInterval(() => {
+              window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+              if (++n >= 13 || document.body.dataset.holdsCompleted === '1') window.clearInterval(iv);
+            }, 100);
+          }, 2000 + h.t - 300);
+        }
+      });
+      obs.observe(document.body, { attributes: true, attributeFilter: ['data-game'] });
+    }, hold);
+    await page.getByRole('button', { name: 'スタート' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-holds-completed', '1', { timeout: 30_000 });
+  });
 });
 
 test('manifest と Service Worker が使える', async ({ page }) => {

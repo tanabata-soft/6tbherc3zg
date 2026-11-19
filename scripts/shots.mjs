@@ -23,8 +23,9 @@ const SCREENS = [
     open: async (page) => {
       await page.click('#start-button');
       await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
-      // READY（2秒）が過ぎてノーツが見えるまで少し待つ
-      await page.waitForTimeout(6500);
+      // READY（2秒）＋曲の約5.3秒地点: 最初の長押し（5.6秒・レーン0）の帯が
+      // 頭から尾まで画面に入っている頃合い
+      await page.waitForTimeout(7300);
     },
   },
 ];
