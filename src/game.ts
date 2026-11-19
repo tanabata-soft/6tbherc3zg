@@ -35,7 +35,7 @@ import {
 } from './logic';
 import type { SongEntry } from './charts';
 import { audioContext, loadBuffer, nowSeconds, playBuffer, resumeAudio, stopCurrent, unlockAudio } from './audio';
-import { playCompleteSound, playFailSound, playHitSound, startHoldSound, stopAllHoldSounds, stopHoldSound } from './sound';
+import { playCompleteSound, playEmptySound, playFailSound, playHitSound, startHoldSound, stopAllHoldSounds, stopHoldSound } from './sound';
 import { vibrateHit } from './haptics';
 import { setData } from './debug';
 
@@ -255,6 +255,12 @@ export class Game {
     return this.playing;
   }
 
+  /** テスト用の入口向け: 曲の現在位置（ms。READY 中は負、演奏中でなければ -1） */
+  songPositionMs(): number {
+    if (!this.playing) return -1;
+    return (nowSeconds() - this.startAt) * 1000;
+  }
+
   /** 曲を読み込んで演奏を始める。読み込み済みなら即座に始まる。 */
   async start(entry: SongEntry, difficulty: Difficulty, offsetMs: number): Promise<void> {
     // スタート操作のジェスチャの中で呼ばれる前提で、まず音声を unlock する
@@ -347,15 +353,19 @@ export class Game {
     // 猶予（grace）中の長押しがあれば、新しいノーツより先に押し直しとして扱う
     for (const n of this.notes) {
       if (n.lane === lane && n.holdPhase === 'grace' && repressHold(n, nowMs)) {
-        // 連続音を再開する（ピッチの上がり具合は経過分の progress で引き継ぐ）
+        // 連打を再開する（ピッチの上がり具合は経過分の progress で引き継ぐ）
         const feverNow = isFever(this.entry?.data.fever ?? [], nowMs / 1000);
         const progress = Math.min(1, Math.max(0, (nowMs - n.timeMs) / Math.max(1, n.holdMs)));
-        startHoldSound(n, effectiveTier(this.combo, feverNow), n.timeMs + n.holdMs - nowMs, progress);
+        startHoldSound(n, effectiveTier(this.combo, feverNow), n.timeMs + n.holdMs - nowMs, progress, this.entry?.data.bpm ?? 120);
         return;
       }
     }
     const hit = findHit(this.notes, lane, nowMs);
-    if (!hit) return;
+    if (!hit) {
+      // ノーツのないレーンを押したときも、ヒット音とは別の小さな音で「触れた」ことを返す
+      playEmptySound();
+      return;
+    }
     hit.note.state = 1;
     const fever = isFever(this.entry?.data.fever ?? [], nowMs / 1000);
     this.score += scoreFor(hit.judge, fever);
@@ -372,9 +382,9 @@ export class Game {
     if (hit.note.holdMs > 0) {
       // 長押し: 集計（PERFECT等への加算）は押し切ったときに頭の判定で行う。コンボは頭で増やす
       beginHold(hit.note, hit.judge, 60000 / (this.entry?.data.bpm ?? 120));
-      // 連続音を頭のヒットと同時に鳴らし始める（尾まで途切れない）
+      // ヒット音の連打を頭のヒットと同時に鳴らし始める（間隔は曲の BPM の16分音符）
       const progress = Math.min(1, Math.max(0, (nowMs - hit.note.timeMs) / Math.max(1, hit.note.holdMs)));
-      startHoldSound(hit.note, tier, hit.note.timeMs + hit.note.holdMs - nowMs, progress);
+      startHoldSound(hit.note, tier, hit.note.timeMs + hit.note.holdMs - nowMs, progress, this.entry?.data.bpm ?? 120);
     } else {
       this.counts[hit.judge]++;
     }
@@ -388,7 +398,7 @@ export class Game {
     for (const n of this.notes) {
       if (n.lane === lane && n.holdPhase === 'holding') {
         releaseHold(n, nowMs);
-        // 離したら連続音は即座に止める（押し直せば再開する）
+        // 離したら連打は即座に止める（押し直せば再開する）
         stopHoldSound(n);
       }
     }
@@ -548,7 +558,7 @@ export class Game {
       this.syncCombo();
     }
 
-    // 長押しの進行: tick スコア（拍ごと。音は鳴らさず連続音に一本化）、
+    // 長押しの進行: tick スコア（拍ごと。音はヒット音の連打が担当し、tick 自体は鳴らさない）、
     // 押し切ったら頭の判定で集計＋ボーナス＋完走音、失敗はミス＋失敗音
     for (const n of this.notes) {
       if (n.holdPhase !== 'holding' && n.holdPhase !== 'grace') continue;
@@ -563,7 +573,7 @@ export class Game {
         this.holdsCompleted++;
         setData('holdsCompleted', this.holdsCompleted);
         setData('score', this.score);
-        // 連続音は尾の時刻ちょうどで止め、完走音へつなぐ
+        // 連打は尾の時刻ちょうどで止め、完走音へつなぐ
         stopHoldSound(n);
         playCompleteSound(n.headJudge, effectiveTier(this.combo, fever));
         this.burst(

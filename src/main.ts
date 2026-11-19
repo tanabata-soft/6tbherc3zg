@@ -335,6 +335,7 @@ exposeTestApi({
     difficulty: selectedDiff,
     offset: offsetMs,
     playing: game.isPlaying,
+    songMs: game.songPositionMs(),
     sound: isSoundOn(),
     vibrate: isVibrateOn(),
     lyrics: lyricsOn,

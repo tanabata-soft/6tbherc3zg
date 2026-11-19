@@ -2,7 +2,7 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.8.2
+更新: 2026-11-19・版 v1.8.3
 
 ## 今の状態
 
@@ -12,6 +12,10 @@
 - 曲: 『石畳のハイウェイ』(BPM 135) / 『Kiso Night Silhouette』(BPM 150)。**v1.6.0 から音ゲー用ショート編集**（石畳 104.8秒 / Kiso Night 127.7秒。全長版は `assets-full/` に保管、編集手順は `assets-full/README.md`）
   - 譜面は `scripts/generate-charts.py`（librosa）で生成（v3方式、下記）。ノーツ数: 石畳 146/263/350、Kiso Night 191/383/499（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96]、Kiso Night [44,67][96,127]（秒、編集後のタイムライン）
+- v1.8.3 の変更:
+  - **長押し中の音を「持続音」から「ヒット音の連打」に変更**（オーナー指示「連続音は今のタッチ音を連続で鳴らして」）。v1.8.1 の `HOLD_TONE` / `holdToneFor` は廃止。正本は `src/sound.ts` の `HOLD_BLIP`（F案の家族、1568→2093Hz、peak 0.11 で通常ヒットより小さく・短い）/ `HOLD_STREAM` / `holdBlipFor(tier, progress)` / `holdStreamIntervalSec(bpm)` / `startHoldSound(key, tier, durationMs, progress, bpm)` / `stopHoldSound(key)`。間隔は曲の BPM の16分音符（135 → 約111ms、150 → 100ms）で、game.ts が charts の bpm を渡す。ピッチは tier 倍率 × 進行で最大 +2 半音（持続音時代の気持ちよさを引き継ぐ）。スケジューリングは AudioContext 時刻の先行予約（lookahead 0.12秒、25ms 間隔のタイマー）で、フレーム落ちで間隔が潰れない。各声は専用のゲイン出口を持ち、停止時はそれを絞るので予約済みの音もまとめて消える。開始/停止条件は v1.8.1 と同じ（頭で開始、離したら即停止、grace 内の押し直しで再開＝progress 引き継ぎ、尾で停止して完走音へ、失敗時は失敗音、同時保持は上限4、尾+0.6秒の安全停止あり）。`app:sound` の kind は hold-start / hold-stop を維持し、連打1発ごとに hold-hit を追加（E2E で数える）。tick スコア計算は不変で、音だけの変更。
+  - **空タップ音を追加**（オーナー指示「ヒットしないときも音を出す。タッチすれば何か音が鳴る」）。`src/sound.ts` の `EMPTY_BLIP`（1046Hz の1音だけ、peak 0.08、短い）/ `playEmptySound()` が正本。発火は game.ts の `pressLane` で、grace 押し直しでもなく `findHit` が null（そのレーンの判定窓 ±160ms 内にノーツがない）ときだけ。ヒットしたタップ・長押しの頭・演奏外（pressLane 自体が演奏中しか呼ばれない）では鳴らない。同じ押下で hit と二重には鳴らない。`app:sound` に kind: 'empty' を追加。
+  - **テスト用の入口に曲位置を追加**: `Game.songPositionMs()` を新設し、main.ts の getState に `songMs` を追加（?debug=1 のときだけ）。E2E の「ヒットで空タップ音が鳴らない」は、壁時計タイマーの単発合わせが並行負荷で窓を外したため、この songMs をページ内で 5ms 間隔で読んでノーツの 50ms 手前で押す方式に変えた（単発の時刻合わせに戻さないこと）。
 - v1.8.2 の変更:
   - **ケージ登場演出を刷新**（オーナー指示: リアル路線の絵＋主演映画モチーフ、右上からではなく画面奥から全面に拡大、セリフの後はフェード、パターンは何種類も）。v1.8.0 の右上スライドイン＋デフォルメ絵（`src/assets/cage.png`）は廃止・削除。新しい絵は主演映画モチーフのリアル路線イラスト5枚（`src/assets/cage-suit.webp` / `cage-conair.webp` / `cage-faceoff.webp` / `cage-treasure.webp` / `cage-ghostrider.webp`、いずれも 500×1000 前後・28〜87KB、メディア生成）。表示は透過切り抜きではなく矩形のまま cover で、金枠（`.cage-frame`）＋暗いビネットに載せ、画面中央の奥からズームして全面近くまで拡大→セリフ表示→フェードアウトするカットイン（`#cage-pop` が全面オーバーレイ、セリフと「○○ COMBO」は絵の下部の `.cage-caption` に重ねる）。
   - **パターン決定は `src/logic.ts` の純関数 `cageAppearance(combo, count)`**（count は今回を含まない過去の登場回数、演奏ごとに game.ts が数え直す）。通常登場は `CAGE_PATTERN_ROTATION`（suit→faceoff→treasure→conair→ghostrider）のローテーション。big（100の倍数）は `CAGE_BIG_PATTERNS`（ghostrider / conair）を big の回数で交互に優先。ズームは `CAGE_PATTERN_ZOOM` でパターン別に3種（standard / fast＝行き過ぎ＋到達時に小揺れ / cinematic＝ゆっくり寄る）。game.ts の `triggerCage` が data 属性 `cage` / `cagePattern` / `cageZoom` を出し、紙吹雪は画面中央から（通常26粒／big 70粒）。表示は main.ts の `showCage(combo, appearance)` が担当し、セリフはパターンごとに2つを `CAGE_PATTERN_LINES` に持って絵ごとにローテーションする（映画の台詞の直引用はなし）。旧 `CAGE_LINES` / `CAGE_BIG_LINES` は廃止。
@@ -70,7 +74,7 @@
   - **記録のバックアップ機能を削除した**（オーナー判断「いらない」）。メニューの書き出し／読み込み UI、`src/backup.ts`、`storage.ts` の export/import、バックアップ読み込み後に合わせ直す `reloadSound` / `reloadVibrate`、関連する単体テスト・E2E・shots の backup 画面をすべて撤去。**テンプレート標準からの意図的な逸脱。再追加しない**（CLAUDE.md の「このアプリ固有の決まり」にも明記）。保存データの版番号（`SCHEMA_VERSION`）は `src/storage.ts` が持つよう移した。保存そのもの（ベストスコア・オフセット・効果音/振動）は従来どおり端末内のみ。
   - **設定ボタンをメニュー下部のフッターへ移動**（上の設定モーダルの項を参照）。モーダルの中身と開閉の挙動は不変。
 - 公開 URL: https://tanabata-soft.github.io/6tbherc3zg/（リポジトリ: tanabata-soft/6tbherc3zg、public）
-- 検証: `npm run verify` 全通過（単体テスト98件、うちホールド16件・譜面 v3 の整合検証18件・歌詞5件・ケージのパターン決定3件）、E2E 21件（20 passed＋長押し完走1件 flaky でリトライ通過。実時間テストの従来からの揺れ。この VM の全並行実行では長押し系が負荷で落ちることがあるが、直列実行と CI が正）、shots 15枚でゲーム画面（ホールド帯・歌詞3行）・game-combo（100コンボ・ghostrider の全面カットイン）・ホーム（尺表示 1:45）を目視確認済み
+- 検証: `npm run verify` 全通過（単体テスト100件、うちホールド16件・譜面 v3 の整合検証18件・歌詞5件・ケージのパターン決定3件・音まわりは連打と空タップのパラメータ検証を含む）、E2E 23件（22 passed＋長押しの帯1件 flaky でリトライ通過。実時間テストの従来からの揺れ。この VM の全並行実行では長押し系が負荷で落ちることがあるが、直列実行と CI が正）、shots 15枚でゲーム画面（ホールド帯・歌詞3行）・game-combo（100コンボ・ghostrider の全面カットイン）・ホーム（尺表示 1:45）を目視確認済み
 - 単体プレビュー: `dist-preview/preview.html`（約8.3MB）
 
 ## やりかけ
@@ -81,7 +85,7 @@
 
 1. **iPhone 実機で音が出るか再確認する**（v1.2.0 の音声対策の最終確認。マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）。v1.8.2 の文字選択禁止（長押しでコールアウトや選択が出ないか）も実機で確認する。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.3.0）も見る。振動は Android 実機で確認する
 2. 遊んだ感触で譜面の密度や FEVER 区間を調整したくなったら、`scripts/generate-charts.py` の SONGS の fever（区間）や定数（HARD_CAP / NORMAL_CAP / EASY_CAP、パターンの確率）を変えて再生成し、版を上げて公開する（生成方式は v3。固定間隔グリッドに戻さない。設計の根拠は docs/CHART-DESIGN.md）
-3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_BLIP / HOLD_TONE（長押し連続音）/ COMPLETE_BLIP / FAIL_BLIP、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、ケージのパターン・ズームは `src/logic.ts` の CAGE_PATTERN_ROTATION / CAGE_BIG_PATTERNS / CAGE_PATTERN_ZOOM、セリフは `src/main.ts` の CAGE_PATTERN_LINES、滞在時間は `src/main.ts` の CAGE_SHOW_MS と `src/style.css` の cage-fade の duration、`src/game.ts` の演出の定数（RING_LIFE など）を変える
+3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_BLIP / HOLD_BLIP・HOLD_STREAM（長押しの連打）/ EMPTY_BLIP（空タップ音）/ COMPLETE_BLIP / FAIL_BLIP、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、ケージのパターン・ズームは `src/logic.ts` の CAGE_PATTERN_ROTATION / CAGE_BIG_PATTERNS / CAGE_PATTERN_ZOOM、セリフは `src/main.ts` の CAGE_PATTERN_LINES、滞在時間は `src/main.ts` の CAGE_SHOW_MS と `src/style.css` の cage-fade の duration、`src/game.ts` の演出の定数（RING_LIFE など）を変える
 
 ## 注意・気づいたこと
 

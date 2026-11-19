@@ -219,13 +219,105 @@ test.describe('ヒット判定（実時間）', () => {
     }, hold);
     await page.getByRole('button', { name: 'スタート' }).click();
     await expect(page.locator('body')).toHaveAttribute('data-holds-completed', '1', { timeout: 30_000 });
-    // 長押し中は連続音が鳴り始め、押し切ったら完走音が鳴る。拍 tick の音は出ない
+    // 長押し中はヒット音の連打が鳴り（hold-hit が複数回）、押し切ったら完走音が鳴る。拍 tick の音は出ない
     const kinds = await page.evaluate(() =>
       (window as unknown as { __sounds: { kind?: string }[] }).__sounds.map((s) => s.kind),
     );
     expect(kinds).toContain('hold-start');
+    expect(kinds.filter((k) => k === 'hold-hit').length).toBeGreaterThanOrEqual(3);
     expect(kinds).toContain('complete');
     expect(kinds).not.toContain('tick');
+  });
+
+  test('ノーツのない所をタップすると空タップ音が鳴る', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => {
+      const w = window as unknown as { __sounds: { kind?: string }[] };
+      w.__sounds = [];
+      document.addEventListener('app:sound', (e) => w.__sounds.push((e as CustomEvent).detail));
+    });
+    // playing になった直後（READY の2秒間は曲の時刻が負で、どのレーンにもノーツはない）に
+    // 1回だけキーを押す。ノーツに当たらないので、空タップ音だけが鳴るはず
+    await page.evaluate(() => {
+      const obs = new MutationObserver(() => {
+        if (document.body.dataset.game === 'playing') {
+          obs.disconnect();
+          window.setTimeout(() => {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+          }, 300);
+        }
+      });
+      obs.observe(document.body, { attributes: true, attributeFilter: ['data-game'] });
+    });
+    await page.getByRole('button', { name: 'スタート' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() =>
+            (window as unknown as { __sounds: { kind?: string }[] }).__sounds.map((s) => s.kind),
+          ),
+        { timeout: 10_000 },
+      )
+      .toContain('empty');
+    const kinds = await page.evaluate(() =>
+      (window as unknown as { __sounds: { kind?: string }[] }).__sounds.map((s) => s.kind),
+    );
+    expect(kinds).not.toContain('hit');
+    expect(kinds).not.toContain('hold-start');
+    await expect(page.locator('body')).toHaveAttribute('data-score', '0');
+  });
+
+  test('ノーツに当たったタップでは空タップ音が鳴らない', async ({ page }) => {
+    // 最初のタップノーツ（長押しでないもの。同レーンに前後 400ms 以内のノーツがないもの）を譜面から取る
+    const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8')) as {
+      highway: { charts: { easy: [number, number, number?][] } };
+    };
+    const easy = charts.highway.charts.easy;
+    const target = easy.find(
+      (n, i) =>
+        (n[2] ?? 0) === 0 &&
+        easy.every((m, j) => j === i || m[1] !== n[1] || Math.abs(m[0] - n[0]) > 400),
+    );
+    if (!target) throw new Error('対象のタップノーツが譜面にありません');
+    const note = { t: target[0], lane: target[1] };
+    await page.goto('/?debug=1');
+    await page.evaluate(() => {
+      const w = window as unknown as { __sounds: { kind?: string }[] };
+      w.__sounds = [];
+      document.addEventListener('app:sound', (e) => w.__sounds.push((e as CustomEvent).detail));
+    });
+    // テスト用の入口で曲の現在位置（songMs）を読み、ノーツの 50ms 手前に来たら1回だけキーを送る。
+    // 壁時計のタイマーで1発合わせる方式は並行実行の負荷で判定窓（±160ms）を外すため、
+    // 位置を見て押す（窓の幅 320ms に対して 5ms 間隔の確認なら、負荷時でも必ず窓の中で押せる）
+    await page.evaluate((n) => {
+      const key = ['d', 'f', 'j', 'k'][n.lane];
+      const api = (window as unknown as { __pwaTest?: { getState?: () => { songMs: number } } }).__pwaTest;
+      let fired = false;
+      const iv = window.setInterval(() => {
+        if (fired) return;
+        const ms = api?.getState?.().songMs ?? -1;
+        if (ms >= n.t - 50) {
+          fired = true;
+          window.clearInterval(iv);
+          window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+        }
+      }, 5);
+    }, note);
+    await page.getByRole('button', { name: 'スタート' }).click();
+    // 1発の押下で何らかの音イベントが出るまで待つ（出た時点で勝敗が分かるので、長く待たない）
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => (window as unknown as { __sounds: { kind?: string }[] }).__sounds.length),
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
+    const kinds = await page.evaluate(() =>
+      (window as unknown as { __sounds: { kind?: string }[] }).__sounds.map((s) => s.kind),
+    );
+    expect(kinds).toContain('hit');
+    expect(kinds).not.toContain('empty');
   });
 
   test('長押しの帯が尾まで見え続ける（尾の間際まで帯が届く）', async ({ page }) => {

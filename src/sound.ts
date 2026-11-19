@@ -9,10 +9,12 @@
 // コンボの tier が上がるほど基準ピッチが +1 半音ずつ上がる（上限 +4 半音。logic.ts が正本）。
 // ヒット音は専用バス（ゲイン→コンプレッサー）を通し、重なってもクリップしにくくする。
 //
-// 長押し中は v1.8.1 から「連続音」: 頭のヒットと同時に持続音が鳴り始め、尾まで途切れない。
-// 進行に合わせてピッチが少しずつ上がる（開始→尾で +2 半音）。周期的な揺れ（ビブラート等）は入れない。
-// 拍 tick の音は廃止して連続音に一本化した（tick スコアの計算自体は logic.ts に残る）。
+// 長押し中は v1.8.3 から「ヒット音の連打」: 頭のヒットと同時に、曲の16分音符の間隔で
+// F案ブリップを連続して鳴らす（v1.8.1 の持続オシレータ音はオーナー指示で廃止）。
+// ピッチはコンボ tier 連動に加えて、進行に合わせて少しずつ上がる（開始→尾で +2 半音）。
+// 周期的な揺れ（ビブラート等）は入れない。拍 tick の音は鳴らさない（tick スコアの計算は logic.ts）。
 // 完走時は完走音（F案＋1音）、猶予切れの失敗時は小さく下がる失敗音を鳴らす。
+// 空タップ（ノーツのないレーンを押したとき）も、ヒット音と聞き分けられる小さな音を鳴らす。
 import { audioContext, audioOutput } from './audio';
 import { load, save } from './storage';
 import { hitPitchMultiplier, type Judge } from './logic';
@@ -50,43 +52,60 @@ export const HIT_BLIP: Record<HitJudge, BlipToneParams> = {
   good: { freq1: 1397, freq2: 0, freq3: 0, dur1: 0.026, dur2: 0, dur3: 0, decaySec: 0.018, peak: 0.12, clickPeak: 0.05, clickSec: 0.005 },
 };
 
-/** 長押しの連続音のパラメータ */
-export interface HoldToneParams {
-  /** 開始時の基本周波数 (Hz)。tier のピッチ補正はここにかかる */
-  baseFreq: number;
-  /** 音量。「鳴っている」と分かるが曲の邪魔にならない水準 */
-  peak: number;
-  /** 開始→尾でピッチが上がる量（半音） */
-  riseSemitones: number;
-  /** 矩形波を丸めるローパスのカットオフ (Hz) */
-  lowpassHz: number;
-  /** 立ち上がりの長さ (秒) */
-  attackSec: number;
-  /** 止めるときの減衰の長さ (秒) */
-  releaseSec: number;
-  /** 矩形波の混ぜ具合 (0..1) */
-  squareMix: number;
-  /** サイン波の混ぜ具合 (0..1) */
-  sineMix: number;
-  /** 同時に鳴らす連続音の上限（超えたら古いものから止める） */
-  maxVoices: number;
+/**
+ * 長押し中の連打の1発の音。F案ヒット音の家族で、通常ヒット音より少し小さく・短い。
+ * v1.8.1 の持続音（HOLD_TONE）は、オーナー指示「連続音は今のヒット音を連続で鳴らして」で廃止した。
+ */
+export const HOLD_BLIP: BlipToneParams = {
+  freq1: 1568,
+  freq2: 2093,
+  freq3: 0,
+  dur1: 0.024,
+  dur2: 0.034,
+  dur3: 0,
+  decaySec: 0.018,
+  peak: 0.11,
+  clickPeak: 0.05,
+  clickSec: 0.005,
+};
+
+/** 長押し中の連打の進め方 */
+export const HOLD_STREAM = {
+  /** ホールドの進行（頭→尾）でピッチが上がる量（半音）。v1.8.1 の持続音と同じ気持ちよさを残す */
+  riseSemitones: 2,
+  /** 同時に鳴らす連打の上限（超えたら古いものから止める） */
+  maxVoices: 4,
+  /** 先行スケジュールの幅（秒）。AudioContext 時刻で予約するので、フレーム落ちで間隔が潰れない */
+  lookaheadSec: 0.12,
+  /** スケジューラの確認間隔 (ms) */
+  timerMs: 25,
+  /** 尾を過ぎても止め忘れた場合に、自分で止まるまでの余分（秒） */
+  safetySec: 0.6,
+  /** 止めるときの減衰の長さ（秒）。予約済みの音も声ごとの出口を絞ってまとめて消す */
+  releaseSec: 0.03,
+} as const;
+
+/** 連打の間隔（秒）: 曲の BPM の16分音符（135 → 約111ms、150 → 100ms） */
+export function holdStreamIntervalSec(bpm: number): number {
+  const b = bpm > 0 ? bpm : 120;
+  return 60 / b / 4;
 }
 
 /**
- * 長押しの連続音: 矩形波をローパスで丸め、サイン波を重ねた持続音。
- * v1.8.0 までは拍ごとの tick 音（peak 0.05）だったが、曲に埋もれて実機で
- * ほぼ聞こえなかったため、v1.8.1 で頭から尾まで途切れない連続音に変えた。
+ * 空タップ音。ノーツのないレーンを押したときに鳴らし、「タッチすれば何か鳴る」状態にする。
+ * ヒット音と聞き分けられるよう、F案の家族で1音だけ・低め（1046Hz）・短い・小さめにする。
  */
-export const HOLD_TONE: HoldToneParams = {
-  baseFreq: 784,
-  peak: 0.085,
-  riseSemitones: 2,
-  lowpassHz: 2200,
-  attackSec: 0.012,
-  releaseSec: 0.04,
-  squareMix: 0.6,
-  sineMix: 0.4,
-  maxVoices: 4,
+export const EMPTY_BLIP: BlipToneParams = {
+  freq1: 1046,
+  freq2: 0,
+  freq3: 0,
+  dur1: 0.03,
+  dur2: 0,
+  dur3: 0,
+  decaySec: 0.015,
+  peak: 0.08,
+  clickPeak: 0.03,
+  clickSec: 0.004,
 };
 
 /**
@@ -132,19 +151,14 @@ export function completeToneFor(
 }
 
 /**
- * 連続音の開始・終了周波数。ピッチは tier 連動（ヒット音と同じ規則）に加えて、
- * ホールドの進行（progress: 0=頭、1=尾）で +riseSemitones 半音まで滑らかに上がる。
- * 押し直しで再開するときは、経過分の progress を渡すと上がり具合を引き継げる。
+ * 連打の1発のピッチ。tier 連動（ヒット音と同じ規則）に加えて、
+ * ホールドの進行（progress: 0=頭、1=尾）で +riseSemitones 半音まで上がる。
+ * 押し直しで再開するときは、経過分の progress から始めるので上がり具合を引き継げる。
  */
-export function holdToneFor(tier: number, progress: number): { tone: HoldToneParams; freqStart: number; freqEnd: number } {
-  const tone = HOLD_TONE;
-  const base = tone.baseFreq * hitPitchMultiplier(tier);
+export function holdBlipFor(tier: number, progress: number): { tone: BlipToneParams; freq1: number; freq2: number } {
   const p = Math.min(1, Math.max(0, progress));
-  return {
-    tone,
-    freqStart: base * Math.pow(2, (tone.riseSemitones * p) / 12),
-    freqEnd: base * Math.pow(2, tone.riseSemitones / 12),
-  };
+  const mul = hitPitchMultiplier(tier) * Math.pow(2, (HOLD_STREAM.riseSemitones * p) / 12);
+  return { tone: HOLD_BLIP, freq1: HOLD_BLIP.freq1 * mul, freq2: HOLD_BLIP.freq2 * mul };
 }
 
 let enabled = load('sound', true);
@@ -154,7 +168,7 @@ export const isSoundOn = (): boolean => enabled;
 export function setSound(on: boolean): void {
   enabled = on;
   save('sound', on);
-  // オフにしたら、鳴っている長押しの連続音も止める
+  // オフにしたら、鳴っている長押しの連打も止める
   if (!on) stopAllHoldSounds();
 }
 
@@ -193,9 +207,12 @@ function getNoiseBuffer(ac: AudioContext): AudioBuffer {
 
 /** ブリップを1つ合成して鳴らす（矩形波の1〜3音＋頭のクリック） */
 function playBlip(tone: BlipToneParams, freq1: number, freq2: number, freq3 = 0): void {
+  playBlipAt(tone, freq1, freq2, freq3, audioContext().currentTime, hitBus());
+}
+
+/** ブリップを、指定した AudioContext 時刻・出口で鳴らす（長押しの連打の先行スケジュール用） */
+function playBlipAt(tone: BlipToneParams, freq1: number, freq2: number, freq3: number, t: number, out: AudioNode): void {
   const ac = audioContext();
-  const t = ac.currentTime;
-  const out = hitBus();
   // 鳴らす音の並び（周波数 0 の音は飛ばし、詰めてつなぐ）
   const segs: { f: number; d: number }[] = [{ f: freq1, d: tone.dur1 }];
   if (freq2 > 0) segs.push({ f: freq2, d: tone.dur2 });
@@ -275,93 +292,135 @@ export function playFailSound(): void {
   }
 }
 
-// ---- 長押しの連続音。同時保持があり得るので、ホールドごとに独立した音源を持ち、上限を設ける ----
-
-interface HoldVoice {
-  oscs: OscillatorNode[];
-  gain: GainNode;
+/** 空タップ音。ノーツのないレーンを押したときに鳴らす（ヒット音とは別の小さな音） */
+export function playEmptySound(): void {
+  if (!enabled) return;
+  try {
+    const ac = audioContext();
+    void ac.resume();
+    playBlip(EMPTY_BLIP, EMPTY_BLIP.freq1, EMPTY_BLIP.freq2);
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'empty', frequency: EMPTY_BLIP.freq1 } }));
+  } catch {
+    // 音が出せなくても続行する
+  }
 }
 
-/** 鳴っている連続音。キーはホールドを識別するオブジェクト（game.ts はノーツ自身を渡す） */
-const holdVoices = new Map<object, HoldVoice>();
+// ---- 長押し中の連打。同時保持があり得るので、ホールドごとに独立した声を持ち、上限を設ける ----
+// 連打は AudioContext 時刻で先行スケジュールする（lookahead 方式）。フレーム落ちや
+// タイマーの揺れで間隔が潰れず、16分音符の間隔を保てる。各声は専用の出口（ゲイン）を持ち、
+// 止めるときはその出口を絞ることで、予約済みの音もまとめて消える。
+
+interface HoldStreamVoice {
+  /** この声専用の出口（ゲイン）。予約済みの音もここを通る */
+  out: GainNode;
+  /** スケジューラのタイマー（声を作った直後にセットする） */
+  timer: ReturnType<typeof setInterval> | undefined;
+  /** 連打を始めた AudioContext 時刻 */
+  startAt: number;
+  /** 次に予約する1発の AudioContext 時刻 */
+  nextAt: number;
+  /** 尾の AudioContext 時刻（これ以降の1発は予約しない） */
+  endAt: number;
+  /** 開始時点のホールド進行（0=頭、1=尾）。押し直し再開時に経過分を引き継ぐ */
+  progress0: number;
+  /** 開始から尾までの残り時間（秒）。進行の計算に使う */
+  durationSec: number;
+  /** 開始時点のコンボ tier（ピッチに使う） */
+  tier: number;
+  /** 連打の間隔（秒） */
+  intervalSec: number;
+}
+
+/** 鳴っている連打。キーはホールドを識別するオブジェクト（game.ts はノーツ自身を渡す） */
+const holdVoices = new Map<object, HoldStreamVoice>();
 
 /**
- * 長押しの連続音を鳴らし始める。頭のヒットと同時に呼ぶ。
- * durationMs は尾までの残り時間で、ピッチはその間に +riseSemitones 半音まで上がる。
- * progress は押し直し再開時に経過分を引き継ぐためのもの（0=頭、1=尾）。
+ * 長押し中の連打を鳴らし始める。頭のヒットと同時に呼ぶ。
+ * durationMs は尾までの残り時間、progress は開始時点の進行（0=頭、1=尾）、
+ * bpm は曲の BPM（連打の間隔＝16分音符を決める）。
  */
-export function startHoldSound(key: object, tier: number, durationMs: number, progress = 0): void {
+export function startHoldSound(key: object, tier: number, durationMs: number, progress = 0, bpm = 120): void {
   if (!enabled) return;
   try {
     stopHoldSound(key);
     // 上限を超えたら古いものから止める
-    while (holdVoices.size >= HOLD_TONE.maxVoices) {
+    while (holdVoices.size >= HOLD_STREAM.maxVoices) {
       const oldest = holdVoices.keys().next().value;
       if (oldest === undefined) break;
       stopHoldSound(oldest);
     }
     const ac = audioContext();
     void ac.resume();
-    const { tone, freqStart, freqEnd } = holdToneFor(tier, progress);
-    const t = ac.currentTime;
-    const durSec = Math.max(0.05, durationMs / 1000);
-
-    // 矩形波をローパスで丸め、サイン波を重ねる（F案と相性のよい、角の取れた持続音）
-    const filter = ac.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = tone.lowpassHz;
-    const gain = ac.createGain();
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(tone.peak, t + tone.attackSec);
-    filter.connect(gain).connect(hitBus());
-
-    const mkOsc = (type: OscillatorType, mix: number): OscillatorNode => {
-      const osc = ac.createOscillator();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freqStart, t);
-      // ピッチは直線的に（指数ランプで）少しずつ上げる。周期的な揺れは入れない
-      osc.frequency.exponentialRampToValueAtTime(freqEnd, t + durSec);
-      const og = ac.createGain();
-      og.gain.value = mix;
-      osc.connect(og).connect(filter);
-      osc.start(t);
-      // 安全弁: 通常は尾の時刻に stopHoldSound で止めるが、止め忘れても鳴りっぱなしにしない
-      osc.stop(t + durSec + 0.6);
-      return osc;
+    const out = ac.createGain();
+    out.gain.value = 1;
+    out.connect(hitBus());
+    const now = ac.currentTime;
+    const durationSec = Math.max(0.05, durationMs / 1000);
+    const voice: HoldStreamVoice = {
+      out,
+      timer: undefined,
+      startAt: now,
+      nextAt: now,
+      endAt: now + durationSec,
+      progress0: Math.min(1, Math.max(0, progress)),
+      durationSec,
+      tier,
+      intervalSec: holdStreamIntervalSec(bpm),
     };
-    const oscs = [mkOsc('square', tone.squareMix), mkOsc('sine', tone.sineMix)];
-    holdVoices.set(key, { oscs, gain });
-    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-start', tier, frequency: freqStart } }));
+    const schedule = (): void => {
+      try {
+        const ahead = ac.currentTime + HOLD_STREAM.lookaheadSec;
+        while (voice.nextAt < voice.endAt && voice.nextAt < ahead) {
+          const elapsed = voice.nextAt - voice.startAt;
+          const prog = voice.progress0 + (1 - voice.progress0) * Math.min(1, elapsed / voice.durationSec);
+          const { tone, freq1, freq2 } = holdBlipFor(voice.tier, prog);
+          playBlipAt(tone, freq1, freq2, 0, voice.nextAt, voice.out);
+          document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-hit', tier: voice.tier, frequency: freq1 } }));
+          voice.nextAt += voice.intervalSec;
+        }
+        // 安全弁: 通常は尾の時刻に stopHoldSound で止めるが、止め忘れても鳴りっぱなしにしない
+        if (ac.currentTime > voice.endAt + HOLD_STREAM.safetySec) stopHoldSound(key);
+      } catch {
+        // 音が出せなくても続行する
+      }
+    };
+    voice.timer = setInterval(schedule, HOLD_STREAM.timerMs);
+    holdVoices.set(key, voice);
+    schedule(); // 最初の1発は即座に予約する
+    const first = holdBlipFor(tier, voice.progress0);
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-start', tier, frequency: first.freq1 } }));
   } catch {
     // 音が出せなくても続行する
   }
 }
 
-/** 長押しの連続音を止める（離した・完走した・失敗した・演奏を止めたとき） */
+/** 長押し中の連打を止める（離した・完走した・失敗した・演奏を止めたとき） */
 export function stopHoldSound(key: object): void {
   const v = holdVoices.get(key);
   if (!v) return;
   holdVoices.delete(key);
+  clearInterval(v.timer);
   try {
     const ac = audioContext();
     const t = ac.currentTime;
-    v.gain.gain.cancelScheduledValues(t);
-    v.gain.gain.setValueAtTime(Math.max(0.0001, v.gain.gain.value), t);
-    v.gain.gain.exponentialRampToValueAtTime(0.0001, t + HOLD_TONE.releaseSec);
-    for (const o of v.oscs) {
+    // 声の出口を絞れば、先行スケジュール済みの音もまとめて消える
+    v.out.gain.cancelScheduledValues(t);
+    v.out.gain.setValueAtTime(Math.max(0.0001, v.out.gain.value), t);
+    v.out.gain.exponentialRampToValueAtTime(0.0001, t + HOLD_STREAM.releaseSec);
+    window.setTimeout(() => {
       try {
-        o.stop(t + HOLD_TONE.releaseSec + 0.05);
+        v.out.disconnect();
       } catch {
-        // 停止予約済みなら何もしない
+        // 切断済みなら何もしない
       }
-    }
+    }, 100);
     document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-stop' } }));
   } catch {
     // 音が出せなくても続行する
   }
 }
 
-/** 鳴っている連続音をすべて止める（演奏終了・中止・効果音オフのとき） */
+/** 鳴っている連打をすべて止める（演奏終了・中止・効果音オフのとき） */
 export function stopAllHoldSounds(): void {
   for (const key of [...holdVoices.keys()]) stopHoldSound(key);
 }

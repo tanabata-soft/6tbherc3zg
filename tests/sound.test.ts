@@ -60,22 +60,46 @@ describe('ヒット音のパラメータ（F案: 8bit系ブリップ、判定 ×
     expect(hitToneFor('good', 3).freq2).toBe(0);
   });
 
-  it('長押しの連続音: 音量は「鳴っていると分かるがヒット音より控えめ」、ピッチは進行で +2 半音', async () => {
-    const { HOLD_TONE, HIT_BLIP, holdToneFor } = await import('../src/sound');
-    // 音量の目安: 0.07〜0.10、かつヒット音 PERFECT より小さい
-    expect(HOLD_TONE.peak).toBeGreaterThanOrEqual(0.07);
-    expect(HOLD_TONE.peak).toBeLessThanOrEqual(0.1);
-    expect(HOLD_TONE.peak).toBeLessThan(HIT_BLIP.perfect.peak);
-    expect(HOLD_TONE.riseSemitones).toBe(2);
+  it('長押し中の連打: 1発は通常ヒットより小さく・短く、間隔は曲の BPM の16分音符', async () => {
+    const { HOLD_BLIP, HOLD_STREAM, HIT_BLIP, holdStreamIntervalSec } = await import('../src/sound');
+    // 音量の目安: 0.10〜0.12、かつヒット音 PERFECT より小さい
+    expect(HOLD_BLIP.peak).toBeGreaterThanOrEqual(0.1);
+    expect(HOLD_BLIP.peak).toBeLessThanOrEqual(0.12);
+    expect(HOLD_BLIP.peak).toBeLessThan(HIT_BLIP.perfect.peak);
+    // F案の家族（同じ2音）で、通常ヒットより短い
+    expect(HOLD_BLIP.freq1).toBe(HIT_BLIP.perfect.freq1);
+    expect(HOLD_BLIP.freq2).toBe(HIT_BLIP.perfect.freq2);
+    expect(HOLD_BLIP.dur1 + HOLD_BLIP.dur2).toBeLessThan(HIT_BLIP.perfect.dur1 + HIT_BLIP.perfect.dur2);
+    // 間隔は16分音符: 135 → 約111ms、150 → 100ms。不正な BPM は 120 扱い
+    expect(holdStreamIntervalSec(135)).toBeCloseTo(60 / 135 / 4, 6);
+    expect(holdStreamIntervalSec(150)).toBeCloseTo(0.1, 6);
+    expect(holdStreamIntervalSec(0)).toBeCloseTo(60 / 120 / 4, 6);
     // 同時保持に備えた上限がある
-    expect(HOLD_TONE.maxVoices).toBeGreaterThanOrEqual(2);
-    // progress 0 では基本周波数、尾では +2 半音。押し直し再開時は経過分から始まる
-    expect(holdToneFor(0, 0).freqStart).toBeCloseTo(HOLD_TONE.baseFreq, 6);
-    expect(holdToneFor(0, 0).freqEnd).toBeCloseTo(HOLD_TONE.baseFreq * Math.pow(2, 2 / 12), 6);
-    expect(holdToneFor(0, 0.5).freqStart).toBeCloseTo(HOLD_TONE.baseFreq * Math.pow(2, 1 / 12), 6);
-    expect(holdToneFor(0, 1).freqStart).toBeCloseTo(holdToneFor(0, 0).freqEnd, 6);
-    // tier でピッチが上がる（ヒット音と同じ規則）
-    expect(holdToneFor(2, 0).freqStart).toBeCloseTo(HOLD_TONE.baseFreq * Math.pow(2, 2 / 12), 6);
+    expect(HOLD_STREAM.maxVoices).toBeGreaterThanOrEqual(2);
+  });
+
+  it('連打のピッチ: tier 連動に加えて、ホールドの進行で +2 半音まで上がる', async () => {
+    const { HOLD_BLIP, holdBlipFor } = await import('../src/sound');
+    expect(holdBlipFor(0, 0).freq1).toBeCloseTo(HOLD_BLIP.freq1, 6);
+    // 進行 0.5 で +1 半音、尾（1）で +2 半音。押し直し再開時は経過分から始まる
+    expect(holdBlipFor(0, 0.5).freq1).toBeCloseTo(HOLD_BLIP.freq1 * Math.pow(2, 1 / 12), 6);
+    expect(holdBlipFor(0, 1).freq1).toBeCloseTo(HOLD_BLIP.freq1 * Math.pow(2, 2 / 12), 6);
+    // tier でピッチが上がる（ヒット音と同じ規則）。2音目も同じ倍率で間隔を保つ
+    expect(holdBlipFor(2, 0).freq1).toBeCloseTo(HOLD_BLIP.freq1 * Math.pow(2, 2 / 12), 6);
+    expect(holdBlipFor(1, 0).freq2).toBeCloseTo(HOLD_BLIP.freq2 * Math.pow(2, 1 / 12), 6);
+    // tier と進行は重なる
+    expect(holdBlipFor(1, 1).freq1).toBeCloseTo(HOLD_BLIP.freq1 * Math.pow(2, 3 / 12), 6);
+  });
+
+  it('空タップ音: F案の家族で1音だけ・低め・短い・小さめ', async () => {
+    const { EMPTY_BLIP, HIT_BLIP, HOLD_BLIP } = await import('../src/sound');
+    expect(EMPTY_BLIP.freq2).toBe(0);
+    expect(EMPTY_BLIP.freq1).toBe(1046);
+    // ヒット音（GOOD が最低）より低く、連打より小さい
+    expect(EMPTY_BLIP.freq1).toBeLessThan(HIT_BLIP.good.freq1);
+    expect(EMPTY_BLIP.peak).toBeLessThan(HOLD_BLIP.peak);
+    expect(EMPTY_BLIP.peak).toBeLessThan(HIT_BLIP.good.peak);
+    expect(EMPTY_BLIP.dur1).toBeLessThanOrEqual(HIT_BLIP.perfect.dur1);
   });
 
   it('完走音は F案＋1音（3音目が最も高い）、失敗音は短く下がる小さな音', async () => {
@@ -100,5 +124,6 @@ describe('ヒット音のパラメータ（F案: 8bit系ブリップ、判定 ×
     expect(() => sound.playCompleteSound('perfect', 2)).not.toThrow();
     expect(() => sound.playFailSound()).not.toThrow();
     expect(() => sound.playHitSound('great', 3)).not.toThrow();
+    expect(() => sound.playEmptySound()).not.toThrow();
   });
 });
