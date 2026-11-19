@@ -16,7 +16,7 @@ async function openSettings(page: import('@playwright/test').Page): Promise<void
 
 test('メニューが表示され、曲と難易度を選べる', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '木曽ケイジビート' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'キソケイジビート' })).toBeVisible();
   await expect(page.getByText('ニコラスケイジと木曽と私')).toBeVisible();
   await expect(page.locator('.song-card')).toHaveCount(2);
   await expect(page.locator('body')).toHaveAttribute('data-song', 'highway');
