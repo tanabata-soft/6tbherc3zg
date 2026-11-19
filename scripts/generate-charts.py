@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""譜面生成 v5（試行）/ v4: src/assets/*.mp3 を解析して src/data/charts.json を作る。
+"""譜面生成 v5 / v4: src/assets/*.mp3 を解析して src/data/charts.json を作る。
 
-v5 の変更点（v1.10.0。SONGS の chart_v5=True の曲だけに適用し、現在は
-『キラキラ木曽旅』(kira) のみ。根拠は docs/CHART-DESIGN.md の「譜面 v5」節）:
+v5 の変更点（v1.10.0。全4曲に適用。根拠は docs/CHART-DESIGN.md の
+「譜面 v5」節、曲別方針は SONGS のメタデータと調査メモ §4）:
 - V5-1 特徴量レイヤー: HPSS で打撃成分（ドラム）と持続成分を分け、持続成分の
   旋律帯域（600〜6000Hz）＝メロディ／声帯域（600〜3000Hz）×有声度＝ボーカル
   の帯域別オンセット強度と、pyin の F0 をスロット属性に持つ。ゲートの物差しは
@@ -15,8 +15,10 @@ v5 の変更点（v1.10.0。SONGS の chart_v5=True の曲だけに適用し、�
 - V5-3 音高コンター: 主レイヤーがメロディ/ボーカルのとき、F0 の動きとレーン
   移動の方向の一致を fit コストに反映（|ΔF0|≥1半音: 同方向 −0.20／逆方向
   +0.45／不動 +0.15。同音反復は jack のゲート緩和にも使う）。
-- chart_v5 でない曲は v4 と完全に同じ経路を通り、譜面は変わらない。
-  特徴量の照合と指標の道具は scripts/analyze-layers.py。
+- burst（16分パターン）のゲートだけは主レイヤーで測らない: 持続成分の
+  フラックスは16分位置のすべてで高く出て常時開いてしまうため、根拠の
+  取り方を曲別に選ぶ（SONGS の burst_basis: main / drums / main65）。
+- 特徴量の照合と指標の道具は scripts/analyze-layers.py。
 
 v4 の変更点（オーナー指示「基本両手（両親指）でやることを前提にやりやすい譜面に」。
 根拠は docs/CHART-DESIGN.md の「両親指前提（譜面 v4）」節）:
@@ -88,12 +90,31 @@ SONGS = {
         "audio": "src/assets/highway.mp3",
         # 編集版（104.8秒）: サビ「ニコラス・ケイジ 幻じゃない〜」の繰り返し区間（字幕）と RMS 盛り上がり（-13dB台）の一致区間
         "fever": [[57, 96]],
+        # v5（V5-1〜V5-3）: ドラムの骨格＋ギター/シンセのリフ（調査メモ §4）。
+        # 特徴量ではリフ（melody）が全体に強く出るため、ドラムへ厚めにバイアスを
+        # かけて Aメロをドラム主体にする。サビはボーカル＋ドラムの合わせ取りが
+        # 方針だが、主レイヤーは1つに決める仕組みのため chorus_layer はドラム
+        # （実測ではサビのリフが僅差で勝ち melody になる。リフ主体のサビとして
+        # 許容範囲と判断し、割当結果は CHART-DESIGN.md に記録する）
+        "chart_v5": True,
+        "layer_bias": {"drums": 0.15, "melody": 0.05},
+        "chorus_layer": "drums",
     },
     "night": {
         "title": "Kiso Night Silhouette",
         "audio": "src/assets/night.mp3",
         # 編集版（127.7秒）: サビ「Kono tokimeki wa nani〜」の繰り返し区間（字幕）と RMS 盛り上がりの一致区間（1番・2番のサビ）
         "fever": [[44, 67], [96, 127]],
+        # v5（V5-1〜V5-3）: シンセリード（メロディ）が主、サビはボーカルへ
+        # 切り替えるフレーズを作る（調査メモ §4）。シンセリードはサビでも
+        # 鳴り続けて特徴量が強いため、サビのボーカルへのボーナスを標準（0.30）
+        # より大きくする（chorus_bonus）
+        "chart_v5": True,
+        "layer_bias": {"melody": 0.10},
+        "chorus_layer": "vocal",
+        "chorus_bonus": 0.45,
+        # burst の根拠はシンセリードの16分（強い場所だけ）＋打撃成分
+        "burst_basis": "main65",
     },
     # v1.9.3 で追加: 単体HTML版に収録されていた2曲。音源は同HTMLから抽出し、
     # v1.6.0 と同じ方針でショート編集した（全長版は assets-full/、詳細は同 README）。
@@ -102,6 +123,16 @@ SONGS = {
         "audio": "src/assets/gospel.mp3",
         # 編集版（125.5秒）: サビ「ニコラス・ケイジと 木曽と私〜谷底にも 朝が来る」の区間（字幕 99.9〜124.3秒）と RMS 盛り上がりの一致区間
         "fever": [[100, 124]],
+        # v5（V5-1〜V5-3）: リードボーカルが主。オルガンの持続和音は長押しの
+        # 供給源（V5-4 は別途）。コール＆レスポンスでフレーズ単位の交替が出る
+        # ことは自然な形として許容する（調査メモ §4）
+        "chart_v5": True,
+        "layer_bias": {"vocal": 0.10},
+        "chorus_layer": "vocal",
+        # 同時押しのゲートを主レイヤー（ボーカル）の strength で見るようになると、
+        # 小節頭がボーカルの休みやオルガンの持続に当たることが多く、hard の
+        # 同時押しが4組まで減った（v4 は15組）。kira と同じ曲別調整で下げる
+        "chord_gate_drop": 14,
     },
     "kira": {
         "title": "キラキラ木曽旅",
@@ -110,7 +141,7 @@ SONGS = {
         "fever": [[64, 90]],
         # 音の強弱が均一で、通常ゲートでは同時押しが5組しか立たなかったため下げる（16で8組＝他曲並み）
         "chord_gate_drop": 16,
-        # v5 試行（V5-1〜V5-3）: シンセメロディ主体、サビはボーカル（調査メモ §4 の曲別方針）。
+        # v5（V5-1〜V5-3）: シンセメロディ主体、サビはボーカル（調査メモ §4 の曲別方針）。
         # chord_gate_drop は v5 でも外せなかった: ゲートを主レイヤーの strength
         # （eff）に切り替えても、drop なしでは hard の同時押しが5組止まりで
         # 設計基準（8組以上）を割る（均一な強弱そのものが原因で、レイヤーを
@@ -118,6 +149,9 @@ SONGS = {
         "chart_v5": True,
         "layer_bias": {"melody": 0.10},
         "chorus_layer": "vocal",
+        # burst の根拠はシンセのアルペジオ（主レイヤー）。v5 試行時（kira のみ
+        # 適用）の形をそのまま維持する
+        "burst_basis": "main",
     },
 }
 
@@ -432,7 +466,9 @@ def assign_layer_for(meta, pslots, is_chorus, prev_layer):
         if k in scores:
             scores[k] += b
     if is_chorus and meta.get("chorus_layer") in scores:
-        scores[meta["chorus_layer"]] += CHORUS_LAYER_BONUS
+        # ボーナス量は曲別に上書きできる（chorus_bonus）。サビでも主パートが
+        # 鳴り続ける曲（night のシンセリード等）では、標準量では切り替わらないため
+        scores[meta["chorus_layer"]] += meta.get("chorus_bonus", CHORUS_LAYER_BONUS)
     best = max(scores, key=lambda k: scores[k])
     if scores[best] < LAYER_MIXED_FLOOR:
         return "mixed", scores
@@ -1072,7 +1108,7 @@ def process_song(song_id, meta, y, sr):
     def unit_fever(unit):
         return any(s is not None and s["fever"] for s in unit_slots(unit))
 
-    def unit_gate(unit, kind, layer=None):
+    def unit_gate(unit, kind, layer=None, burst_basis=None):
         us = unit_slots(unit)
         # FEVER 区間はゲートのエネルギー条件も計画と同じく底上げする（強さの条件は不変）
         ge = unit_energy(unit) + (0.30 if unit_fever(unit) else 0.0)
@@ -1080,8 +1116,29 @@ def process_song(song_id, meta, y, sr):
         # （slot["eff"]、全帯域分布へ写像済み）をゲートの物差しにする
         key = "eff" if layer is not None else "strength"
         if kind == "burst":
-            odd = [s[key] for r, s in enumerate(us) if s is not None and r % 2 == 1]
-            return len(odd) >= 3 and float(np.mean(odd)) >= thr[45] and ge >= ue_p45
+            odd_slots = [s for r, s in enumerate(us) if s is not None and r % 2 == 1]
+            if len(odd_slots) < 3 or ge < ue_p45:
+                return False
+            # burst（16分パターン）の根拠は「裏の16分に速い連打があるか」で、
+            # 曲によって担うパートが違うため、根拠の取り方を曲別に選ぶ
+            # （SONGS の burst_basis。v5 でない曲は従来どおり全帯域のみ）:
+            #   main : 主レイヤーの eff（kira。シンセのアルペジオが16分を担う）
+            #   drums: 全帯域のオンセット（v4 の物差し）か、打撃成分（ドラム＝
+            #          ハットやフィルの16分）の eff（highway / gospel）
+            #   main65: drums の条件に加え、主レイヤーの eff が特に強い場合も通す
+            #          （night。シンセリードの16分は強い場所だけ拾う）
+            # 主レイヤーの持続成分は16分位置のすべてで高く出るため、main 系は
+            # 担い手が明確な曲だけに使う（highway では trill/roll が過剰になった）。
+            if burst_basis == "main":
+                return float(np.mean([s["eff"] for s in odd_slots])) >= thr[45]
+            if float(np.mean([s["strength"] for s in odd_slots])) >= thr[45]:
+                return True
+            if layer is not None:
+                if float(np.mean([s["eff_by_layer"]["drums"] for s in odd_slots])) >= thr[45]:
+                    return True
+                if burst_basis == "main65":
+                    return float(np.mean([s["eff"] for s in odd_slots])) >= thr[65]
+            return False
         if kind == "jack":
             even = [s[key] for r, s in enumerate(us) if s is not None and r in (0, 2, 4)]
             if len(even) == 3 and float(np.mean(even)) >= thr[65] and ge >= ue_p60:
@@ -1173,7 +1230,11 @@ def process_song(song_id, meta, y, sr):
                     "scores": scores,
                 }
             )
-        gate = (lambda u, k, _layer=layer: unit_gate(u, k, _layer)) if v5 else unit_gate
+        gate = (
+            (lambda u, k, _layer=layer: unit_gate(u, k, _layer, meta.get("burst_basis", "drums")))
+            if v5
+            else unit_gate
+        )
         if is_chorus:
             chorus_count += 1
             if phrase:

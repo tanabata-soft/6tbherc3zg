@@ -38,6 +38,13 @@ export interface SongEntry {
   jacketUrl: string;
   /** 演奏画面の背景ジャケットの切り抜き方 */
   bgCrop: JacketCrop;
+  /**
+   * タイトル帯（night 専用の背景の組み立て、v1.10.0）: 主表示は bgCrop の
+   * cover で全面に敷き（上端の三日月が入る横位置にする）、下部にこの帯を
+   * 重ねてタイトルを収める。width は帯の窓の幅（ジャケット幅への割合、
+   * タイトルが収まる幅）、top は帯の始まる縦位置（ジャケット高さへの割合）。
+   */
+  titleBand?: { width: number; top: number };
   /** 収録アルバム名（表示用） */
   album: string;
   genre: string;
@@ -66,8 +73,11 @@ export const SONGS: SongEntry[] = [
     lyrics: lyrics.night,
     audioUrl: nightAudio,
     jacketUrl: nightJacket,
-    // タイトル（KISO NIGHT SILHOUETTE）は左下の横 0.02〜0.72、下端寄せで全部収まる
-    bgCrop: { x: 0, y: 1, titleWidth: 0.76 },
+    // 背景は v1.10.0 から「主表示 cover（上端寄せ）＋タイトル帯」方式:
+    // 主表示の横窓は三日月（横 0.63〜0.79）が入る位置（x 0.6 → 窓は約 0.33〜0.79）、
+    // タイトル（KISO NIGHT SILHOUETTE、横 0.02〜0.72）は下部の帯で収める
+    bgCrop: { x: 0.6, y: 0 },
+    titleBand: { width: 0.76, top: 0.25 },
     album: 'Silver Screen Ascent',
     genre: '90s J-Pop / Eurobeat',
   },

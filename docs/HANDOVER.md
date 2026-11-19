@@ -10,17 +10,18 @@
   - **アプリID（package.json の `name` = `kiso-rhythm-game`）は据え置き**。表示名を変えても ID は変えないこと（保存データのキー接頭辞・復旧範囲・キャッシュが ID 由来で、変えると利用者の記録が消える）。
   - 表示名の正本は `vite.config.ts` の `APP_NAME` と `index.html`（title / apple-mobile-web-app-title / ブランド題字）の2か所。check:content が一致を検査する。
 - 曲: 『石畳のハイウェイ』(BPM 135) / 『Kiso Night Silhouette』(BPM 150) / 『谷底にも朝が来る』(BPM 146) / 『キラキラ木曽旅』(BPM 150)。**音ゲー用ショート編集**（石畳 104.8秒 / Kiso Night 127.7秒 / 谷底 125.5秒 / キラキラ 118.2秒。全長版は `assets-full/` に保管、編集手順は `assets-full/README.md`）
-  - 譜面は `scripts/generate-charts.py`（librosa）で生成（v4方式＝両親指前提＋FEVER 密度上げ、下記。v1.10.0 からキラキラだけ v5 方式＝主レイヤー選択を試行、下記の v1.10.0 節）。ノーツ数: 石畳 146/287/370、Kiso Night 202/384/498、谷底 205/349/572、キラキラ 193/360/481（かんたん/ふつう/むずかしい）
+  - 譜面は `scripts/generate-charts.py`（librosa）で生成（v1.10.0 から全曲 v5 方式＝主レイヤー選択＋両親指前提＋FEVER 密度上げ、下記の v1.10.0 節）。ノーツ数: 石畳 163/267/365、Kiso Night 177/337/545、谷底 193/331/535、キラキラ 193/360/481（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96]、Kiso Night [44,67][96,127]、谷底 [100,124]、キラキラ [64,90]（秒、編集後のタイムライン）
   - 曲選択はメニューのカルーセル（横スクロール＋スナップ、中央＝選択中）。スライドのジャケットは縦長 4/5 の切り抜きで、切り取る側は曲ごとに CSS で指定（下記 v1.9.3）
 - v1.10.0 の変更:
-  - **譜面生成 v5 を『キラキラ木曽旅』(kira) だけに試行導入**（設計の正本は docs/CHART-DESIGN.md の「譜面 v5」節、調査は `~/workspace/kiso-chart-v5-research.md`）。生成器の SONGS で kira にだけ `chart_v5: True` / `layer_bias: {melody: 0.10}` / `chorus_layer: "vocal"` を付けた。**他3曲は v4 と完全に同じ経路で、再生成しても charts.json が辞書レベルで完全一致する**（毎回ベースラインと比較して確認すること）。
-  - **仕組み**: スロットに HPSS 分離＋帯域別強度＋pyin F0 の特徴量を持たせ（`compute_layer_features`）、フレーズごとに主レイヤー（drums/melody/vocal/mixed）を決めて、ゲート類が見る strength を主レイヤーの `eff`（全帯域分布への順位写像）に切り替える。サビは連続フレーズをグループとして1回だけ決める。主レイヤーがメロディ/ボーカルのときは F0 の動きとレーン移動方向の一致を fit コストに反映する。kira の割当: 小節2〜39 melody／サビ（小節40〜60）vocal／以降 melody。
-  - **kira の数値**: ノーツ数 193/360/481（v4 は 187/363/423）。同時押し hard 10組、長押し 6/12/15本。平均|ズレ| 5.7〜6.4ms。主レイヤー一致率 0.631→0.694、音高コンター一致率 0.382→0.624（指標は `scripts/analyze-layers.py metrics` で再計算できる）。
-  - **chord_gate_drop（kira の 16）は v5 でも残置**。eff ゲートだけでは同時押しが5組止まりで基準を割るため（理由は生成器コメントと CHART-DESIGN.md）。
-  - **展開の前提**: 他3曲への v5 展開は、オーナーが kira v5 の叩き心地を実機で確認してから。各曲の主レイヤー方針は調査メモ §4（highway=ボーカル主役＋サビはドラム／night=ドラム主役／gospel=ボーカル＋オルガン）。展開時は SONGS に chart_v5 等を足して再生成し、対象曲以外の一致確認を忘れないこと。
-  - アプリ本体（src/）・他3曲・楽曲は変更なし。検証: verify 全通過（単体127件）、E2E 29件通過＋1件 flaky（既知の長押し実時間テスト、リトライ通過）、オートプレイ全通しで全4曲 hard フルコンボ完走（kira 481/481）。
-  - 実機確認をお願いしたい点: kira v5 の叩き心地（サビのボーカル感、hard の密度）。
+  - **譜面生成 v5 を全4曲に適用**（設計の正本は docs/CHART-DESIGN.md の「譜面 v5」節、調査は `~/workspace/kiso-chart-v5-research.md`）。当初は kira だけの試行だったが、オーナー判断で全曲展開した。**kira の譜面は試行時から不変**（再生成で完全一致を確認済み）。生成器の SONGS に曲ごとの `chart_v5` / `layer_bias` / `chorus_layer`（+ 曲別 `chorus_bonus` / `burst_basis` / `chord_gate_drop`）を持たせている。
+  - **仕組み**: スロットに HPSS 分離＋帯域別強度＋pyin F0 の特徴量を持たせ（`compute_layer_features`）、フレーズごとに主レイヤー（drums/melody/vocal/mixed）を決めて、ゲート類が見る strength を主レイヤーの `eff`（全帯域分布への順位写像）に切り替える。サビは連続フレーズをグループとして1回だけ決める。主レイヤーがメロディ/ボーカルのときは F0 の動きとレーン移動方向の一致を fit コストに反映する。**burst ゲートだけは主レイヤーで測らない**（持続成分は16分位置のすべてで高く出て過剰になるため。根拠は曲別の `burst_basis`）。
+  - **割当と数値**（ノーツ数 easy/normal/hard、平均|ズレ| ms）: highway = Aメロ drums／サビ melody（リフ僅差勝ち）。163/267/365、精度 7.2/7.2/7.1、同時押し hard 8組、jack が 28 ユニットに増加（ドラム主体の帰結）。night = melody／サビ2回目のみ vocal。177/337/545、精度 6.9/7.5/6.3（改善）、同時押し 13組。gospel = 全編 vocal。193/331/535、精度 10.4/8.3/8.4（全難易度で改善）、同時押し 14組。kira = melody／サビ vocal。193/360/481、精度 5.6〜6.4ms、同時押し 10組、主レイヤー一致率 0.694・コンター一致率 0.624（指標は `scripts/analyze-layers.py metrics`、kira 用）。
+  - **chord_gate_drop**: kira の 16 は残置（eff ゲートでも drop なしでは同時押し5組止まり）。**gospel に 14 を新規追加**（ボーカル eff でゲートを見ると同時押しが 15→4 組に減ったため。drop で14組）。highway / night は不要。
+  - **V5-4（長押しの持続音ベース化）は見送り**（gospel の長押しが既に v4 以上で、現行の持続判定で足りているため。理由は CHART-DESIGN.md）。
+  - **night の演奏画面の背景を作り替え**（オーナー実機報告「絵の上が切れている」対応、仕様はオーナー確定）: 従来の下端寄せポスター（`titleWidth: 0.76`）をやめ、主表示は cover のまま上端（三日月が入る横位置、bgCrop `{x: 0.6, y: 0}`）に合わせ、下部にタイトル帯（`titleBand: {width: 0.76, top: 0.25}`）を重ねる方式にした。帯は `game.ts` の `drawTitleBand` が中間 canvas に描いて上端を destination-out のグラデーションで薄くし、主表示へ馴染ませる（キャッシュ `bgBand`）。主表示側のタイトルは帯の不透明部で隠れる高さにしてある。**全体縮小＋ぼかし埋めはオーナー却下のため不採用**。highway のポスター層・gospel・kira の背景は変更なし（shots で確認）。
+  - 検証: verify 全通過（単体127件）、E2E 30件全通過、オートプレイ全通しで全4曲 hard フルコンボ完走。night 背景は 390×844 / 393×852 / 420×912 でも撮影し、三日月とタイトルの両入りと帯の境目を確認済み。
+  - 実機確認をお願いしたい点: 全曲の叩き心地（highway の jack の多さ・サビの主パート感、night のサビの切り替わり、gospel の当たり感）と、night 背景の見え方。
 - v1.9.4 の変更:
   - **フルコンボ演出を追加**（演奏の締め。結果画面の前に全面で出す）。出す条件はフルコンボのときだけ: 判定は `src/logic.ts` の純関数 `isFullCombo(counts)`＝ミス0かつ判定されたノーツが1つ以上（長押しの失敗も game.ts の集計でミスに数わるため、演奏の集計定義と一致する。判定ノーツ0の即時終了はフルコンボにしない）。通常クリアでは出さず結果画面へ直行する。実装は `src/main.ts` の `showFullCombo` / `endFullCombo`（`Game` の onFinish で振り分け）と `index.html` の `#fullcombo`、`src/style.css` の `.fullcombo*`。
   - **タイミング構成**: 滞在 2.8 秒（`main.ts` の `FULLCOMBO_SHOW_MS`。CSS の fullcombo-fade / fullcombo-zoom も 2.8 秒で一致させること）。絵は100コンボの big 登場と同じゴーストライダー（`src/assets/cage-ghostrider.webp`）を全面 cover で敷き、ゆっくり寄る（scale 1.0→1.09）。下部の暗いグラデーションの上に金の「FULL COMBO」（0.12 秒遅れで弾けて出る）＋最大コンボ数。タップ（pointerdown）でスキップして結果へ進める。

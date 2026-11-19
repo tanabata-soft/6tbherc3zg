@@ -220,6 +220,9 @@ export class Game {
   private startAt = 0; // AudioContext 時刻（秒）
   private durationSec = 0;
   private bg: HTMLImageElement | null = null;
+  /** タイトル帯（night 専用）の中間 canvas のキャッシュ。
+   * 画像・画面サイズ・DPR が変わったときだけ作り直す */
+  private bgBand: { img: HTMLImageElement; w: number; h: number; d: number; c: HTMLCanvasElement } | null = null;
   private flash = [0, 0, 0, 0];
   private particles: Particle[] = [];
   private particlePool: Particle[] = [];
@@ -710,13 +713,19 @@ export class Game {
    * 基本は画面全体を覆う cover 切り抜きで、切り取る位置は曲ごとに
    * charts.ts の bgCrop（カルーセルの寄せ方向と同じ知見）で決める。
    *
-   * ただし highway / night は、絵の中のタイトル（highway は横 0.02〜0.64、
-   * night は 0.02〜0.72）が、縦長の画面の cover 窓（幅は画面比で約 0.46）より
-   * 広く、そのままでは右端が切れてしまう。そこでこの2曲だけ、タイトルが
-   * 収まる幅の窓（bgCrop.titleWidth）を画面の横幅いっぱいに敷く層を、
-   * 下地（cover を暗くしたもの）の上に重ね、内側の端をグラデーションで
-   * 下地へ溶かす（ポスター層）。縦位置は bgCrop.y（highway は上端、
-   * night は下端）で、タイトルが絵の中にある側に寄せる。
+   * ただし highway は、絵の中のタイトル（横 0.02〜0.64）が、縦長の画面の
+   * cover 窓（幅は画面比で約 0.46）より広く、そのままでは右端が切れてしまう。
+   * そこで highway だけ、タイトルが収まる幅の窓（bgCrop.titleWidth）を
+   * 画面の横幅いっぱいに敷く層を、下地（cover を暗くしたもの）の上に重ね、
+   * 内側の端をグラデーションで下地へ溶かす（ポスター層、上端寄せ）。
+   *
+   * night は組み立てが違う（v1.10.0、オーナーの実機確認で確定した仕様）。
+   * 主表示は cover のまま上端（三日月を含む）に合わせ（bgCrop は三日月が
+   * 窓に入る横位置）、タイトル（横 0.02〜0.72）は下部に「タイトル帯」
+   * （charts.ts の titleBand）として、タイトルが収まる幅で重ねる。
+   * 以前の「下端寄せポスター」では、実機で三日月と上部の星空が切り抜きの
+   * 外になっていたための変更。全体を縮小して上下をぼかしで埋める方式は
+   * オーナーが明示的に却下したため使わない。
    * この後に従来どおりベール（暗幕）がかかるので、ノーツの視認性は変わらない。
    * ケージ背景はこの方式の対象外（従来どおり全面 cover で置き換わる）。
    */
@@ -738,8 +747,13 @@ export class Game {
     const sx = crop.x * (iw - sw);
     const sy = crop.y * (ih - sh);
     g.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
+    // night: 主表示（上の cover）の下部にタイトル帯を重ねて終わる
+    if (this.entry?.titleBand) {
+      this.drawTitleBand(W, H);
+      return;
+    }
     if (!crop.titleWidth) return;
-    // タイトルが収まる窓を敷く曲: 下地を暗くしてから、窓を横幅いっぱいに重ねる
+    // タイトルが収まる窓を敷く曲（highway）: 下地を暗くしてから、窓を横幅いっぱいに重ねる
     g.fillStyle = 'rgba(6,8,16,.5)';
     g.fillRect(0, 0, W, H);
     const pw = crop.titleWidth * iw;
@@ -766,6 +780,50 @@ export class Game {
         g.fillRect(0, py, W, feather);
       }
     }
+  }
+
+  /**
+   * タイトル帯（night 専用、v1.10.0）: ジャケットの下部を、タイトルが
+   * 収まる幅（titleBand.width）の窓で画面の下部に重ねる。主表示は
+   * drawJacketBackground の cover（上端＝三日月に合わせたもの）で、
+   * 帯はその上に重なる。帯の上端はグラデーションで主表示へ馴染ませる:
+   * 帯を中間 canvas に描いてから上端を destination-out で薄くし、
+   * 毎フレームは描くだけにする（画像・画面サイズ・DPR が変わったときだけ
+   * 作り直す）。帯の高さは、主表示側のタイトル（cover では縦 0.70〜0.92 に
+   * 出る）が帯の不透明な部分で隠れるよう、top（=0.25）から決まる。
+   */
+  private drawTitleBand(W: number, H: number): void {
+    const img = this.bg;
+    const band = this.entry?.titleBand;
+    if (!img || !band) return;
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const bw = band.width * iw;
+    const bandH = Math.round(((ih * (1 - band.top)) / bw) * W);
+    const d = window.devicePixelRatio || 1;
+    if (
+      !this.bgBand ||
+      this.bgBand.img !== img ||
+      this.bgBand.w !== W ||
+      this.bgBand.h !== H ||
+      this.bgBand.d !== d
+    ) {
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(W * d));
+      c.height = Math.round(bandH * d);
+      const cg = c.getContext('2d');
+      if (!cg) return;
+      cg.drawImage(img, 0, ih * band.top, bw, ih * (1 - band.top), 0, 0, c.width, c.height);
+      const fade = Math.min(120, bandH * 0.28) * d;
+      const grad = cg.createLinearGradient(0, 0, 0, fade);
+      grad.addColorStop(0, 'rgba(0,0,0,1)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      cg.globalCompositeOperation = 'destination-out';
+      cg.fillStyle = grad;
+      cg.fillRect(0, 0, c.width, fade);
+      this.bgBand = { img, w: W, h: H, d, c };
+    }
+    this.g.drawImage(this.bgBand.c, 0, H - bandH, W, bandH);
   }
 
   private finish(): void {
