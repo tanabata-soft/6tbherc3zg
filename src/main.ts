@@ -1,5 +1,12 @@
 import './style.css';
-import { DIFFICULTIES, clampOffset, type Difficulty, type SongId } from './logic';
+import {
+  DIFFICULTIES,
+  clampOffset,
+  type CageAppearance,
+  type CagePattern,
+  type Difficulty,
+  type SongId,
+} from './logic';
 import { SONGS, songById, type SongEntry } from './charts';
 import { Game, type GameResult } from './game';
 import { exposeTestApi, setData, setupDebug } from './debug';
@@ -9,7 +16,11 @@ import { isSoundOn, setSound } from './sound';
 import { isVibrateOn, setVibrate } from './haptics';
 import { audioState, isUnlocked, unlockAudio } from './audio';
 import { load, migrateStorage, requestPersist, save } from './storage';
-import cageUrl from './assets/cage.png';
+import cageSuitUrl from './assets/cage-suit.webp';
+import cageConairUrl from './assets/cage-conair.webp';
+import cageFaceoffUrl from './assets/cage-faceoff.webp';
+import cageTreasureUrl from './assets/cage-treasure.webp';
+import cageGhostriderUrl from './assets/cage-ghostrider.webp';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -155,47 +166,63 @@ settingsDialog.addEventListener('close', () => {
   document.body.classList.remove('dialog-open');
 });
 
-// ---- ケージ風キャラの登場（30コンボごと）と歌詞表示 ----
-/** ケージのセリフ（汎用的な熱いセリフをローテーションする。映画の台詞の直引用はしない） */
-const CAGE_LINES = [
-  'いいぞ、その調子だ！',
-  '燃えてきた！',
-  'それだ、完璧だ！',
-  '木曽の風を感じろ！',
-  'まだまだいける！',
-  '伝説はここからだ！',
-];
-/** 100コンボの倍数専用のセリフ */
-const CAGE_BIG_LINES = ['信じられない走りだ！', 'これが伝説ってやつだ！'];
-let cageLineIndex = 0;
-let cageByeTimer = 0;
+// ---- ケージ登場（30コンボごと）と歌詞表示 ----
+/** ケージの絵（パターンごと。主演映画がモチーフのリアル路線イラスト） */
+const CAGE_PATTERN_URLS: Record<CagePattern, string> = {
+  suit: cageSuitUrl,
+  conair: cageConairUrl,
+  faceoff: cageFaceoffUrl,
+  treasure: cageTreasureUrl,
+  ghostrider: cageGhostriderUrl,
+};
+/** パターンごとのセリフ（モチーフに寄せた汎用的な熱いセリフ。映画の台詞の直引用はしない） */
+const CAGE_PATTERN_LINES: Record<CagePattern, string[]> = {
+  suit: ['いいぞ、その調子だ！', '完璧なリズムだ！'],
+  conair: ['そのうさぎは、俺が守る！', '最後まで連れていくぞ！'],
+  faceoff: ['顔は変わっても、リズムは変わらない！', '別人でも、コンボは止まらない！'],
+  treasure: ['宝はこの先だ、全力で掘り当てろ！', '地図は嘘をつかない！'],
+  ghostrider: ['地獄の炎より熱いコンボだ！', '燃え上がれ、そのまま突っ走れ！'],
+};
+/** パターンごとのセリフのローテーション位置 */
+const cageLineIndexes: Record<CagePattern, number> = {
+  suit: 0,
+  conair: 0,
+  faceoff: 0,
+  treasure: 0,
+  ghostrider: 0,
+};
 let cageHideTimer = 0;
 
-function showCage(combo: number, big: boolean): void {
+/** 登場の滞在時間（ms）。CSS のフェード（cage-fade）の長さと合わせる */
+const CAGE_SHOW_MS = 1500;
+const CAGE_SHOW_BIG_MS = 1900;
+
+function showCage(combo: number, appearance: CageAppearance): void {
   const pop = $('cage-pop');
-  const lines = big ? CAGE_BIG_LINES : CAGE_LINES;
-  $('cage-line').textContent = lines[cageLineIndex++ % lines.length];
+  const { pattern, zoom, big } = appearance;
+  const lines = CAGE_PATTERN_LINES[pattern];
+  $('cage-line').textContent = lines[cageLineIndexes[pattern]++ % lines.length];
   $('cage-combo-num').textContent = String(combo);
+  $<HTMLImageElement>('cage-img').src = CAGE_PATTERN_URLS[pattern];
+  pop.dataset.pattern = pattern;
+  pop.dataset.zoom = zoom;
   pop.classList.toggle('big', big);
-  pop.hidden = false;
-  pop.classList.remove('bye');
   // 登場アニメーションを最初から再生する
-  pop.classList.remove('show');
+  pop.classList.remove('show', 'zoom-standard', 'zoom-fast', 'zoom-cinematic');
+  pop.hidden = false;
   void pop.offsetWidth;
-  pop.classList.add('show');
+  pop.classList.add('show', `zoom-${zoom}`);
   if (big) {
     const canvas = $<HTMLCanvasElement>('game-canvas');
     canvas.classList.remove('shake');
     void canvas.offsetWidth;
     canvas.classList.add('shake');
   }
-  window.clearTimeout(cageByeTimer);
   window.clearTimeout(cageHideTimer);
-  cageByeTimer = window.setTimeout(() => pop.classList.add('bye'), 1000);
   cageHideTimer = window.setTimeout(() => {
     pop.hidden = true;
-    pop.classList.remove('show', 'bye');
-  }, 1250);
+    pop.classList.remove('show');
+  }, big ? CAGE_SHOW_BIG_MS : CAGE_SHOW_MS);
 }
 
 /** 歌詞の3行（前／今／次）を出す。今の行が変わるたびに game から呼ばれる */
@@ -220,7 +247,7 @@ const game = new Game($<HTMLCanvasElement>('game-canvas'), {
     show('menu');
     renderMenu();
   },
-  onCage: (combo, big) => showCage(combo, big),
+  onCage: (combo, appearance) => showCage(combo, appearance),
   onLyric: (index) => showLyric(index),
 });
 
@@ -280,7 +307,17 @@ $('back-button').addEventListener('click', () => {
 // 初回のタップで音声を unlock する（iPhone ではジェスチャの中で AudioContext を起こす必要がある）
 window.addEventListener('pointerdown', () => unlockAudio());
 
-$<HTMLImageElement>('cage-img').src = cageUrl;
+// タップ・長押しで文字選択やコールアウトが出ないようにする（選択が必要な入力欄はこのアプリには無い）。
+// CSS の user-select / -webkit-touch-callout と合わせて、JS 側でも選択開始と長押しメニューを止める
+document.addEventListener('selectstart', (e) => e.preventDefault());
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ケージの絵は、初回の登場で読み込み待ちにならないよう先読みしておく
+for (const url of Object.values(CAGE_PATTERN_URLS)) {
+  const im = new Image();
+  im.src = url;
+}
+$<HTMLImageElement>('cage-img').src = CAGE_PATTERN_URLS.suit;
 $('version').textContent = __APP_VERSION__;
 // デバッグモード: バージョンの表示を続けて 5 回タップで切り替え
 setupDebug($('debug-panel'), $('version-line'), [

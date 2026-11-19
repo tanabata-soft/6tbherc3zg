@@ -11,10 +11,10 @@ import {
   LANE_COLORS,
   advanceHold,
   beginHold,
+  cageAppearance,
   effectiveTier,
   emptyCounts,
   findHit,
-  isCageBigCombo,
   isCageCombo,
   isFever,
   lyricIndexAt,
@@ -27,6 +27,7 @@ import {
   sweepMisses,
   tierFx,
   tintColor,
+  type CageAppearance,
   type Difficulty,
   type Judge,
   type JudgementCounts,
@@ -52,8 +53,8 @@ export interface GameCallbacks {
   onFinish(result: GameResult): void;
   /** 中断（左上タップ、または画面が隠れた）でメニューに戻るとき */
   onAbort(): void;
-  /** コンボが30の倍数に達した（ケージ風キャラの登場）。big は100の倍数 */
-  onCage(combo: number, big: boolean): void;
+  /** コンボが30の倍数に達した（ケージ登場）。appearance にパターン・ズーム・big が入る */
+  onCage(combo: number, appearance: CageAppearance): void;
   /** 歌詞の現在行が変わった（-1 は歌詞のない区間） */
   onLyric(index: number): void;
 }
@@ -128,6 +129,8 @@ export class Game {
   private score = 0;
   private combo = 0;
   private maxCombo = 0;
+  /** ケージの登場回数（パターンのローテーションに使う。演奏ごとに数え直す） */
+  private cageCount = 0;
   private startAt = 0; // AudioContext 時刻（秒）
   private durationSec = 0;
   private bg: HTMLImageElement | null = null;
@@ -265,6 +268,7 @@ export class Game {
     this.score = 0;
     this.combo = 0;
     this.maxCombo = 0;
+    this.cageCount = 0;
     this.particles = [];
     this.rings = [];
     this.pops = [];
@@ -400,27 +404,31 @@ export class Game {
   }
 
   /**
-   * ケージ風キャラの登場（30コンボごと）。紙吹雪は Canvas 側で出し、
-   * キャラと吹き出しの表示は main.ts 側（onCage）に任せる。
+   * ケージ登場（30コンボごと）。パターンとズームは logic の cageAppearance が決める。
+   * 紙吹雪は Canvas 側で画面中央から出し、絵とセリフの表示は main.ts 側（onCage）に任せる。
    */
   private triggerCage(combo: number): void {
+    const appearance = cageAppearance(combo, this.cageCount);
+    this.cageCount++;
     setData('cage', combo);
-    const big = isCageBigCombo(combo);
+    setData('cagePattern', appearance.pattern);
+    setData('cageZoom', appearance.zoom);
+    const big = appearance.big;
     const n = big ? 70 : 26;
     for (let i = 0; i < n; i++) {
-      const an = Math.PI * (0.6 + Math.random() * 0.9); // 左下方向へ広げる
-      const sp = 120 + Math.random() * (big ? 340 : 240);
+      const an = Math.random() * Math.PI * 2; // 中央から全方向へ
+      const sp = 140 + Math.random() * (big ? 380 : 260);
       this.spawnParticle(
-        this.width - 56,
-        92,
+        this.width / 2,
+        this.height * 0.42,
         Math.cos(an) * sp,
-        -Math.abs(Math.sin(an)) * sp * 0.4,
+        Math.sin(an) * sp,
         0.7 + Math.random() * 0.5,
         CONFETTI_COLORS[i % CONFETTI_COLORS.length],
         5,
       );
     }
-    this.cb.onCage(combo, big);
+    this.cb.onCage(combo, appearance);
   }
 
   /** コンボと tier をテスト用の入口（data 属性）へ出す */

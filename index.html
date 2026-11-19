@@ -74,11 +74,15 @@
           <p class="lyric-line lyric-current" id="lyric-current"></p>
           <p class="lyric-line lyric-next" id="lyric-next"></p>
         </div>
-        <!-- コンボの節目で登場するケージ風キャラ。タップは透過させる -->
+        <!-- コンボの節目で登場するケージ（全面へズームするカットイン）。タップは透過させる -->
         <div id="cage-pop" class="cage-pop" hidden aria-hidden="true">
-          <p class="cage-bubble" id="cage-line"></p>
-          <img class="cage-img" id="cage-img" alt="">
-          <p class="cage-combo"><span id="cage-combo-num">30</span> COMBO</p>
+          <div class="cage-frame">
+            <img class="cage-img" id="cage-img" alt="">
+            <div class="cage-caption">
+              <p class="cage-bubble" id="cage-line"></p>
+              <p class="cage-combo"><span id="cage-combo-num">30</span> COMBO</p>
+            </div>
+          </div>
         </div>
         <p id="game-live" class="sr-only" aria-live="polite"></p>
       </div>

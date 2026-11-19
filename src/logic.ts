@@ -283,6 +283,51 @@ export function isCageBigCombo(combo: number): boolean {
   return combo > 0 && combo % 100 === 0;
 }
 
+/** ケージ登場のパターン（絵のモチーフ。主演映画が題材のリアル路線イラスト） */
+export type CagePattern = 'suit' | 'conair' | 'faceoff' | 'treasure' | 'ghostrider';
+
+/** カットインのズームの種別（standard: 標準 / fast: 速く＋到達時に小揺れ / cinematic: ゆっくり寄る） */
+export type CageZoom = 'standard' | 'fast' | 'cinematic';
+
+/** 1回のケージ登場の内容（パターンとズームと big かどうか） */
+export interface CageAppearance {
+  pattern: CagePattern;
+  zoom: CageZoom;
+  big: boolean;
+}
+
+/** 通常登場のパターンのローテーション順（5種を順に回す） */
+export const CAGE_PATTERN_ROTATION: readonly CagePattern[] = ['suit', 'faceoff', 'treasure', 'conair', 'ghostrider'];
+
+/** big（100の倍数）で優先するパターン（big の回数で交互に出す） */
+export const CAGE_BIG_PATTERNS: readonly CagePattern[] = ['ghostrider', 'conair'];
+
+/** パターンごとのズーム種別 */
+export const CAGE_PATTERN_ZOOM: Record<CagePattern, CageZoom> = {
+  suit: 'standard',
+  faceoff: 'fast',
+  treasure: 'cinematic',
+  conair: 'standard',
+  ghostrider: 'fast',
+};
+
+/**
+ * 登場パターンを決める。count は今回を含まない過去の登場回数（0始まり）で、
+ * 通常登場は5パターンをローテーションする。big（100の倍数）では
+ * ghostrider / conair を big の回数（100→1回目）で交互に優先する。
+ */
+export function cageAppearance(combo: number, count: number): CageAppearance {
+  const big = isCageBigCombo(combo);
+  let pattern: CagePattern;
+  if (big) {
+    const bigIndex = Math.max(0, Math.floor(combo / 100) - 1);
+    pattern = CAGE_BIG_PATTERNS[bigIndex % CAGE_BIG_PATTERNS.length];
+  } else {
+    pattern = CAGE_PATTERN_ROTATION[Math.max(0, count) % CAGE_PATTERN_ROTATION.length];
+  }
+  return { pattern, zoom: CAGE_PATTERN_ZOOM[pattern], big };
+}
+
 /** tier ごとの演出パラメータ。値が大きいほど派手 */
 export interface TierFx {
   /** ヒット時の粒子数の倍率 */

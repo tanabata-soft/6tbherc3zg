@@ -7,6 +7,9 @@ import {
   hitPitchMultiplier,
   hitPitchSemitones,
   CAGE_COMBO_INTERVAL,
+  CAGE_PATTERN_ROTATION,
+  CAGE_PATTERN_ZOOM,
+  cageAppearance,
   isCageBigCombo,
   isCageCombo,
   tierFx,
@@ -54,6 +57,33 @@ describe('コンボ tier の境界', () => {
     expect(isCageBigCombo(100)).toBe(true);
     expect(isCageBigCombo(200)).toBe(true);
     expect(isCageBigCombo(150)).toBe(false);
+  });
+
+  it('通常登場は5パターンをローテーションし、6回目で先頭に戻る', () => {
+    expect(CAGE_PATTERN_ROTATION).toEqual(['suit', 'faceoff', 'treasure', 'conair', 'ghostrider']);
+    const seq = [0, 1, 2, 3, 4, 5].map((count) => cageAppearance(30, count));
+    expect(seq.map((a) => a.pattern)).toEqual([...CAGE_PATTERN_ROTATION, 'suit']);
+    expect(seq.every((a) => !a.big)).toBe(true);
+  });
+
+  it('big（100の倍数）では ghostrider と conair を交互に優先する', () => {
+    expect(cageAppearance(100, 0)).toEqual({ pattern: 'ghostrider', zoom: 'fast', big: true });
+    expect(cageAppearance(200, 1)).toEqual({ pattern: 'conair', zoom: 'standard', big: true });
+    expect(cageAppearance(300, 2).pattern).toBe('ghostrider');
+    // big のときは通常ローテーションの途中でも big 側が優先される
+    expect(cageAppearance(100, 3).pattern).toBe('ghostrider');
+  });
+
+  it('ズームはパターンごとに決まる', () => {
+    expect(CAGE_PATTERN_ZOOM).toEqual({
+      suit: 'standard',
+      faceoff: 'fast',
+      treasure: 'cinematic',
+      conair: 'standard',
+      ghostrider: 'fast',
+    });
+    expect(cageAppearance(30, 2).zoom).toBe('cinematic'); // treasure
+    expect(cageAppearance(60, 0).zoom).toBe('standard'); // suit
   });
 });
 

@@ -1,6 +1,13 @@
 # 進捗メモ（作業用）
 
-更新: 2026-11-19 v1.8.1 公開
+更新: 2026-11-19 v1.8.2 公開
+
+## v1.8.2（2026-11-19）
+- ケージ登場演出を刷新（オーナー指示「リアル路線の絵にして、主演映画をモチーフに」「右上からではなく画面奥から全面に拡大、セリフの後はフェード」「何パターンも欲しい」）: 右上スライドイン＋デフォルメ絵（cage.png）を廃止し、主演映画モチーフのリアル路線イラスト5枚（スーツ／コン・エアー／フェイス/オフ／ナショナル・トレジャー／ゴーストライダー、src/assets/cage-*.webp、500×1000・28〜87KB）に差し替え。画面中央の奥からズームして全面近くまで拡大し、セリフを見せてフェードアウトするカットインにした（金枠＋暗いビネット、絵は矩形のまま cover 表示）
+- パターンの決定は logic.ts の純関数 `cageAppearance(combo, count)`（前任の未コミット実装を引き継いで採用）: 通常登場は5パターンをローテーション、big（100の倍数）は ghostrider / conair を交互に優先。ズームはパターン別に3種（standard: suit/conair、fast: faceoff/ghostrider＝行き過ぎ＋小揺れ、cinematic: treasure＝ゆっくり寄る）。セリフはパターンごとに2つを main.ts の CAGE_PATTERN_LINES に持ち、絵に合わせてローテーション
+- 滞在時間は通常1.5秒 / big 1.9秒（フェードは CSS の cage-fade、ピーク不透明度 0.97 で背後のノーツを完全には消さない）。big は絵が大きく（高さ 88dvh）＋紙吹雪70粒＋Canvas シェイク。紙吹雪の発生点は右上から画面中央に変更。data 属性に cagePattern / cageZoom を追加
+- iPhone の文字選択的な挙動を禁止（オーナー実機報告「たまに画面選択したようになる」への対応）: アプリ全体に `user-select: none` / `-webkit-user-select: none` / `-webkit-touch-callout: none` を適用（tap-highlight は既存）。`#game-screen` にも `touch-action: none` を追加（canvas は既存）。選択が必要な入力欄が無いことを確認し、main.ts で selectstart / contextmenu の preventDefault も追加
+- 検証: verify 全通過（単体98件、うち cageAppearance のテスト3件を追加）、E2E 21件（20 passed＋長押し完走1件 flaky でリトライ通過。従来からの実時間の揺れ）、shots 15枚で game-combo（100コンボ・ghostrider の全面カットイン）を目視確認。単体プレビューは約8.3MB（画像5枚追加と旧 cage.png 削除が相殺され v1.8.1 とほぼ同じ）
 
 ## v1.8.1（2026-11-19）
 - 長押しの音を「拍 tick」から「連続音」に変更（オーナー実機フィードバック「長押し中も音が鳴るようにして」＋確認「長押し中は連続でなってる？」→ 連続音の方針に決定）。従来の tick 音（TICK_BLIP、peak 0.05）は曲に埋もれて実機でほぼ聞こえなかった

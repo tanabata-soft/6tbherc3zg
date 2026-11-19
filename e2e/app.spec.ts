@@ -335,6 +335,9 @@ test('コンボ tier とケージ登場がテスト用の入口で確認でき�
   await expect(page.locator('body')).toHaveAttribute('data-combo', '100');
   await expect(page.locator('body')).toHaveAttribute('data-combo-tier', '4');
   await expect(page.locator('body')).toHaveAttribute('data-cage', '100');
+  // 100 の倍数（big）は ghostrider 優先で、ズームは fast
+  await expect(page.locator('body')).toHaveAttribute('data-cage-pattern', 'ghostrider');
+  await expect(page.locator('body')).toHaveAttribute('data-cage-zoom', 'fast');
   // ケージのポップが出て、コンボ数とセリフが入っている（100 なので一段大きい big）
   await expect(page.locator('#cage-pop')).toBeVisible();
   await expect(page.locator('#cage-pop')).toHaveClass(/big/);
@@ -346,6 +349,8 @@ test('コンボ tier とケージ登場がテスト用の入口で確認でき�
   });
   await expect(page.locator('body')).toHaveAttribute('data-combo-tier', '2');
   await expect(page.locator('body')).toHaveAttribute('data-cage', '30');
+  // 2回目の登場はローテーションの2番目（faceoff）になる
+  await expect(page.locator('body')).toHaveAttribute('data-cage-pattern', 'faceoff');
   await expect(page.locator('#cage-combo-num')).toHaveText('30');
 });
 

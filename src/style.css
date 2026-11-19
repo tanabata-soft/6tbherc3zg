@@ -24,6 +24,11 @@
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+  /* タップ・長押しで文字選択やコールアウト（iPhone の長押しメニュー）が出ないようにする。
+     選択が必要な入力欄はこのアプリには無い */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* display を指定した要素でも hidden 属性で確実に隠す */
@@ -445,6 +450,8 @@ button:disabled {
   inset: 0;
   background: var(--bg);
   z-index: 10;
+  /* 親要素でもタッチ操作をブラウザに渡さない（スクロール・ズーム・選択の抑止） */
+  touch-action: none;
 }
 
 #game-canvas {
@@ -512,90 +519,170 @@ button:disabled {
   }
 }
 
-/* ケージ風キャラの登場（右上、スコアの下）。タップは透過 */
+/* ケージ登場（コンボの節目）: 画面の奥から全面近くへズームするカットイン。
+   セリフを見せたあとフェードアウトする。タップは透過。
+   滞在時間は main.ts の CAGE_SHOW_MS / CAGE_SHOW_BIG_MS と合わせる */
 .cage-pop {
   position: absolute;
-  top: calc(env(safe-area-inset-top) + 44px);
-  right: 6px;
-  width: 116px;
-  text-align: center;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
   z-index: 5;
-  opacity: 0;
-  transition: opacity 0.18s;
+  /* 周囲を落とした暗いビネットで、映画のワンシーンのように見せる */
+  background: radial-gradient(ellipse at center, rgb(0 0 0 / 0.16) 42%, rgb(0 0 0 / 0.62) 100%);
 }
 
+/* 出現中はフェードイン→静止→フェードアウトを 1 本のアニメーションで通す。
+   ピークの不透明度は 0.97 に抑え、背後のノーツが完全には消えないようにする */
 .cage-pop.show {
-  opacity: 1;
-  animation: cage-in 0.3s ease-out;
+  animation: cage-fade 1.5s linear forwards;
 }
 
-.cage-pop.bye {
-  opacity: 0;
-  transform: translateX(10px);
-  transition: opacity 0.2s, transform 0.2s;
+.cage-pop.big.show {
+  animation-duration: 1.9s;
 }
 
-.cage-pop.big {
-  width: 156px;
-}
-
-@keyframes cage-in {
+@keyframes cage-fade {
   0% {
-    transform: translateX(64%) scale(0.6);
+    opacity: 0;
   }
-  70% {
-    transform: translateX(-4%) scale(1.06);
+  10% {
+    opacity: 0.97;
+  }
+  72% {
+    opacity: 0.97;
   }
   100% {
-    transform: translateX(0) scale(1);
+    opacity: 0;
   }
 }
 
-.cage-bubble {
+/* 絵の額縁（金枠＋影）。絵は矩形のまま cover で見せる */
+.cage-frame {
   position: relative;
-  margin: 0 2px 2px;
-  padding: 4px 8px;
-  background: var(--text);
-  color: var(--bg);
-  border-radius: 12px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1.35;
+  height: min(76dvh, 190vw);
+  aspect-ratio: 1 / 2;
+  border: 2px solid var(--gold);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow:
+    0 18px 60px rgb(0 0 0 / 0.75),
+    0 0 0 6px rgb(0 0 0 / 0.35);
 }
 
-.cage-bubble::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -6px;
-  margin-left: -5px;
-  border: 5px solid transparent;
-  border-top: 6px solid var(--text);
-  border-bottom: 0;
+.cage-pop.big .cage-frame {
+  height: min(88dvh, 220vw);
 }
 
-.cage-pop.big .cage-bubble {
-  font-size: 0.88rem;
+.cage-pop.show .cage-frame {
+  animation: cage-zoom-standard 1.5s ease-out forwards;
+}
+
+.cage-pop.big.show .cage-frame {
+  animation-duration: 1.9s;
+}
+
+.cage-pop.zoom-fast.show .cage-frame {
+  animation-name: cage-zoom-fast;
+}
+
+.cage-pop.zoom-cinematic.show .cage-frame {
+  animation-name: cage-zoom-cinematic;
+}
+
+/* 標準: 奥から寄って、最後はわずかに寄り続ける */
+@keyframes cage-zoom-standard {
+  0% {
+    transform: scale(0.18);
+  }
+  55% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.05);
+  }
+}
+
+/* 速い: 行き過ぎて戻り、到達直後に小さく震える */
+@keyframes cage-zoom-fast {
+  0% {
+    transform: scale(0.18);
+  }
+  30% {
+    transform: scale(1.07);
+  }
+  42% {
+    transform: scale(1) translate(2px, -1px);
+  }
+  50% {
+    transform: scale(1) translate(-2px, 1px);
+  }
+  58% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.05);
+  }
+}
+
+/* ゆっくり: 全体を通して静かに寄り続ける */
+@keyframes cage-zoom-cinematic {
+  0% {
+    transform: scale(0.45);
+  }
+  100% {
+    transform: scale(1.06);
+  }
 }
 
 .cage-img {
   display: block;
   width: 100%;
-  filter: drop-shadow(0 4px 10px rgb(0 0 0 / 0.55));
+  height: 100%;
+  object-fit: cover;
+}
+
+/* セリフとコンボ数は絵の下部に重ねる（下端は暗く落として読みやすくする） */
+.cage-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 30px 12px 12px;
+  text-align: center;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.8) 55%, transparent);
+}
+
+.cage-bubble {
+  display: inline-block;
+  margin: 0 0 4px;
+  padding: 5px 12px;
+  background: var(--text);
+  color: var(--bg);
+  border-radius: 12px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.cage-pop.big .cage-bubble {
+  font-size: 1.02rem;
 }
 
 .cage-combo {
   margin: 0;
   color: var(--gold);
   font-weight: 800;
-  font-size: 1.05rem;
+  font-size: 1.35rem;
   line-height: 1.2;
   text-shadow: 0 2px 6px rgb(0 0 0 / 0.9);
 }
 
 .cage-pop.big .cage-combo {
-  font-size: 1.3rem;
+  font-size: 1.65rem;
 }
 
 .sr-only {
