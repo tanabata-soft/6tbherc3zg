@@ -18,6 +18,7 @@ PWA アプリ(ツール/ゲーム)の共通テンプレート。**新しいア�
 - ゲーム仕様の正本は `src/logic.ts`（判定幅・スコア・精度・ランク）と `src/data/charts.json`（譜面）。
 - 譜面は手で直さない。`scripts/generate-charts.py` を再実行して作り直す（音源解析: ビートグリッド量子化＋オンセット強度、難易度は入れ子 hard ⊇ normal ⊇ easy、FEVER は歌詞字幕のサビ位置＋RMS）。
 - 音源は MP3（`src/assets/*.mp3`）。AAC/m4a はヘッドレス Chromium がデコードできず E2E が成立しないため使わない。iPhone Safari は MP3 の decodeAudioData に対応する。
+- **記録のバックアップ機能（ファイルへの書き出し / 読み込み）は、v1.3.0 でオーナー判断により削除した**（テンプレート標準からの意図的な逸脱）。**再追加しない。** 保存は端末内（localStorage）だけ。保存データの版番号（`SCHEMA_VERSION`）は `src/storage.ts` が持つ。
 - 音源・ジャケットは `src/assets/` から import する（dist では assets として出力され precache に入る。build:preview では data URI 化される）。public/ に直置きしない。
 
 ## 基本方針
@@ -83,16 +84,16 @@ Vite + TypeScript + vite-plugin-pwa + Vitest + Playwright + ESLint。UI フレ�
   - 公開のたびに `version` を上げる。Service Worker のキャッシュ名は自動生成なので、手で合わせる番号はない。
   - `npm run check:dist` が `#version` の有無を確認する。
 - ユーザーデータは `src/storage.ts` 経由(`localStorage` を `try/catch` で囲む)。**保存キー名は変更しない**(記録が消える)。
-  - **保存データには版番号(`schemaVersion`、`src/backup.ts`)を持たせる。** 保存の形を変えるときは版を上げ、`src/storage.ts` の `migrate()` に移行処理を書く(キー名を変えたまま古い記録を捨てない)。
-  - **記録を残すアプリは、ファイルへの書き出し / 読み込みを用意する**(テンプレートの「記録のバックアップ」)。`localStorage` は、ブラウザの都合で消えることがある(特に iPhone)。読み込みは、別のアプリや新しすぎる版のファイルを、理由を示して断る。
+  - **保存データには版番号(`schemaVersion`、`src/storage.ts` の `SCHEMA_VERSION`)を持たせる。** 保存の形を変えるときは版を上げ、`src/storage.ts` の `migrate()` に移行処理を書く(キー名を変えたまま古い記録を捨てない)。
+  - テンプレート標準では「記録を残すアプリは、ファイルへの書き出し / 読み込み(記録のバックアップ)を用意する」が、**このアプリではオーナー判断で削除済み(上の「このアプリ固有の決まり」参照)。再追加しない。**
   - **保存する対象が増えたら(設定・ランキングなど)、対象ごとに store を分ける。** 作法は次のとおり(今の `src/storage.ts` / `src/backup.ts` の分け方を、対象ごとに繰り返す形):
     - `Storage` と現在時刻(`now: () => Date`)は外から渡し、単体テストで差し替えられるようにする(中で `localStorage` や `new Date()` を直接触らない)。
-    - 保存の形には、アプリの ID と版(`version`)を持たせる(バックアップの `app` と `schemaVersion` と同じ考え方)。
+    - 保存の形には、アプリの ID と版(`version`)を持たせる(バックアップファイルの `app` と `schemaVersion` と同じ考え方)。
     - 形が合わない・壊れているデータは「空 / 既定値」として読み、**読み込みのときに保存し直さない**(壊れたデータを既定値で上書きすると、あとから直す手がかりまで消える)。
-    - ファイルからの読み込みは、「検証だけをする関数(今の記録は変えない)」と「確認後に置き換える関数」を分ける(`src/backup.ts` の `parseBackup` と、保存する側の分け方と同じ)。
+    - ファイルからの読み込みを作る場合は、「検証だけをする関数(今の記録は変えない)」と「確認後に置き換える関数」を分ける(このアプリではバックアップ自体を削除済みなので、作法だけ残す)。
     - 参照実装: このテンプレートから作られた『ギャラクシーウォーズミニ』の `src/storage/ranking-store.ts` / `settings-store.ts`(https://github.com/tsuku3dayo/mini-galaxywars-game/tree/main/src/storage)。単体テスト付きで、この作法どおりに書かれている。
 - **起動に失敗したときの復旧を用意する。** キャッシュ優先の Service Worker は、ファイルが食い違うと起動しなくなることがある。`public/boot.js`(メインとは別の普通のスクリプト)が、起動できなかったとき、キャッシュを消して読み込み直す(1回目は自動、2分以内の2回目は「なおす」ボタン)。保存データは消さない。**消すのは、このアプリの Service Worker とキャッシュだけ**(範囲を絞らないと、同じサイトのほかのアプリのキャッシュまで消える)。`src/main.ts` の最後で `window.__appStarted = true` にする。`npm run check:dist` が確認する。
-- **同じサイトに載るアプリ: 名前をアプリごとに別にする。** GitHub Pages では、すべてのアプリが同じサイト(`mmishina-art.github.io`)に載る。`localStorage`・`sessionStorage`・Service Worker・キャッシュは、サイトの単位で共有されるので、アプリの ID(`package.json` の `name`)を、保存データのキーの接頭辞(`src/storage.ts`)・バックアップの `app` 名(`src/backup.ts`)・復旧の範囲(`public/boot.js`)に使い、ほかのアプリと混ざらないようにする。**新しいアプリでは `name` を変え、テンプレート用の印 `"pwaTemplate": true` を `package.json` から削除する**(`npm run check:dist` が、どちらも確認する)。
+- **同じサイトに載るアプリ: 名前をアプリごとに別にする。** GitHub Pages では、すべてのアプリが同じサイト(`mmishina-art.github.io`)に載る。`localStorage`・`sessionStorage`・Service Worker・キャッシュは、サイトの単位で共有されるので、アプリの ID(`package.json` の `name`)を、保存データのキーの接頭辞(`src/storage.ts`)・復旧の範囲(`public/boot.js`)に使い、ほかのアプリと混ざらないようにする。**新しいアプリでは `name` を変え、テンプレート用の印 `"pwaTemplate": true` を `package.json` から削除する**(`npm run check:dist` が、どちらも確認する)。
 - **外部のリソース(Web フォント、CDN のスクリプトなど)に頼らない。** オフラインで動かなくなるため。フォント・音・画像のファイルは、アプリの中に入れてキャッシュ対象(`vite.config.ts` の `globPatterns`)にし、ライセンスを README に書けば使ってよい。`npm run check:dist` が、成果物(`dist/`)に外部の URL が入っていないことも確認する(許すのは、XML の名前空間など通信しない文字列だけ。アプリごとに許すものは `scripts/check-dist.mjs` の `ALLOWED_URL` に足す)。
 - **画像・音・問題文・文章は、自作するか、ライセンスを README に明記する。** 公開するアプリなので、あとで困らないようにする。
 - iPhone の安全領域(`env(safe-area-inset-*)`)を考慮する。
@@ -122,7 +123,7 @@ Vite + TypeScript + vite-plugin-pwa + Vitest + Playwright + ESLint。UI フレ�
 - 画面の確認やバランス調整のための、隠れた操作(`src/debug.ts`)。**バージョンの表示を続けて 5 回タップ**で切り替わり、オンのあいだだけ左下に操作パネル(DEBUG)が出る。「終了」で消える。
 - パネルの操作は、アプリごとに `src/main.ts` の `setupDebug(...)` に足す(例: 所持金を最大にする、すぐ勝つ、次の画面へ飛ぶ)。
 - **デバッグの操作を使った回は、記録を残さない**(ふつうに遊んだ記録と混ざらないように。テンプレートの `cheated`)。
-- オン/オフの保存キーは `<アプリID>.debug` で、記録(`<アプリID>-...`)とは別。バックアップには入らない。
+- オン/オフの保存キーは `<アプリID>.debug` で、記録(`<アプリID>-...`)とは別にする。
 - README に入り方を書く。
 - **テスト用の入口(E2E 用)は、パネルとは別に用意する**(`src/debug.ts`)。状態は `setData(...)` で `<body>` の data 属性にいつも出し、状態の読み書きなどの関数は `exposeTestApi(...)` で `?debug=1` のときだけ `window.__pwaTest` に出す(ふだんは出ない)。テスト用の入口で書き換えた回も、記録を残さない。
 

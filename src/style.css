@@ -65,9 +65,8 @@ main {
   margin: 4px 0 14px;
 }
 
-/* 題字の上の行: 英字ロゴを中央に、設定ボタンを右上に置く */
+/* 題字の上の行: 英字ロゴを中央に置く（設定ボタンは画面下部のフッターにある） */
 .brand-top {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -84,23 +83,25 @@ main {
   text-shadow: 0 0 10px rgb(57 208 255 / 0.7);
 }
 
-/* 設定ボタン（ブランド題字の右上）。ポスターの世界観に合わせた半透明のピル型 */
+/* メニュー下部のフッター（設定・インストール案内・バージョンをまとめる） */
+.menu-footer {
+  margin-top: 28px;
+}
+
+/* 設定ボタン（メニュー下部のフッター）。横幅のある控えめなボタンにして、ファーストビューの主役にしない */
 .settings-open {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
   margin: 0;
-  padding: 6px 12px;
-  min-height: 44px;
-  border-radius: 999px;
-  border: 1px solid rgb(255 77 141 / 0.5);
-  background: rgb(23 27 49 / 0.8);
-  box-shadow: 0 0 12px rgb(255 77 141 / 0.25);
-  font-size: 0.82rem;
+  padding: 10px 16px;
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.9rem;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -615,33 +616,6 @@ body.dialog-open {
   display: block;
   width: 100%;
   margin: 8px 0 0;
-}
-
-.backup {
-  margin-top: 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 4px 12px;
-  background: var(--surface);
-}
-
-.backup summary {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-.file-button {
-  display: inline-block;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 10px 20px;
-  margin: 4px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-2);
-  cursor: pointer;
 }
 
 .boot-error small {

@@ -4,9 +4,13 @@ import { expect, test } from '@playwright/test';
 // アプリの ID（package.json の name）。保存データのキーの接頭辞になる
 const APP_ID = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { name: string }).name;
 
-/** 設定モーダルを開く（設定はメニュー右上の設定ボタンの中にある） */
+/** 設定モーダルを開く（設定ボタンはメニュー下部のフッターにあるので、スクロールしてから押す） */
 async function openSettings(page: import('@playwright/test').Page): Promise<void> {
-  await page.locator('#settings-open').click();
+  // 起動（または「なおす」後の再読み込み）が終わってから触る。途中で触ると、再読み込みで要素が外れて失敗する
+  await page.waitForFunction(() => (window as unknown as { __appStarted?: boolean }).__appStarted === true);
+  const button = page.locator('#settings-open');
+  await button.scrollIntoViewIfNeeded();
+  await button.click();
   await expect(page.locator('#settings-dialog')).toBeVisible();
 }
 
@@ -212,43 +216,6 @@ test('最初の画面からインストール方法を開ける（使ってい�
 test('最初の画面にバージョンが表示される', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#version')).toHaveText(/^\d+\.\d+\.\d+$/);
-});
-
-test('記録をファイルに書き出し、消えたあとに読み込んで戻せる', async ({ page }) => {
-  await page.goto('/');
-  await openSettings(page);
-  await page.getByRole('button', { name: 'オフセットを10ms増やす' }).click();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#settings-dialog')).toBeHidden();
-  await page.getByText('記録のバックアップ').click();
-
-  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'ファイルに書き出す' }).click()]);
-  const path = await download.path();
-  const { readFileSync } = await import('node:fs');
-  const text = readFileSync(path, 'utf8');
-  expect(JSON.parse(text).data[`${APP_ID}-offset`]).toBe('10');
-
-  // 記録を消す → 読み込んで戻す
-  await page.evaluate(() => localStorage.clear());
-  await page.reload();
-  await openSettings(page);
-  await expect(page.locator('#offset-value')).toHaveText('0ms');
-  await page.keyboard.press('Escape');
-  await page.getByText('記録のバックアップ').click();
-  await page.locator('#backup-import').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(text) });
-  await openSettings(page);
-  await expect(page.locator('#offset-value')).toHaveText('+10ms');
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#backup-message')).toContainText('読み込みました');
-});
-
-test('おかしいバックアップファイルは、理由を表示して読み込まない', async ({ page }) => {
-  await page.goto('/');
-  await page.getByText('記録のバックアップ').click();
-  await page.locator('#backup-import').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"app":"other"}') });
-  await expect(page.locator('#backup-message')).toContainText('このアプリのバックアップではありません');
-  await openSettings(page);
-  await expect(page.locator('#offset-value')).toHaveText('0ms');
 });
 
 test('起動できないときは「なおす」ボタンが出て、押すと起動できる（記録と、ほかのアプリのキャッシュは消えない）', async ({ page }) => {

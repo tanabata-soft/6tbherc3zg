@@ -22,11 +22,6 @@ export function setSound(on: boolean): void {
   save('sound', on);
 }
 
-/** バックアップの読み込み後に、保存されている値へ合わせ直す */
-export function reloadSound(): void {
-  enabled = load('sound', true);
-}
-
 // アタック用の短いノイズは使い回す（ヒットのたびに作り直さない）
 let noiseBuffer: AudioBuffer | undefined;
 

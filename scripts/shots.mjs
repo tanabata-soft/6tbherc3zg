@@ -9,9 +9,15 @@ import { mkdirSync, rmSync } from 'node:fs';
 /** 撮る画面。open は、ページを開いたあと、その画面を出すための操作。 */
 const SCREENS = [
   { name: 'home' },
-  { name: 'settings', open: async (page) => page.click('#settings-open') },
+  {
+    name: 'settings',
+    open: async (page) => {
+      // 設定ボタンはメニュー下部のフッターにあるので、スクロールしてから押す
+      await page.locator('#settings-open').scrollIntoViewIfNeeded();
+      await page.click('#settings-open');
+    },
+  },
   { name: 'install', open: async (page) => page.click('#install-open') },
-  { name: 'backup', open: async (page) => page.click('.backup summary') },
   {
     name: 'game',
     open: async (page) => {

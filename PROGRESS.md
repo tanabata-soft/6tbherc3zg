@@ -1,12 +1,18 @@
 # 進捗メモ（作業用）
 
-更新: 2026-11-19 v1.2.0 公開
+更新: 2026-11-19 v1.3.0 公開
 
 ## 状態: 完了
 - pwa-template で新規構築（git main）、暗い固定テーマ
 - 収録曲: 『石畳のハイウェイ』BPM136 / 『Kiso Night Silhouette』BPM152（音源は MP3 192kbps、ジャケットは動画フレーム）
 - 譜面は scripts/generate-charts.py（librosa）で生成: 石畳 181/343/680、Kiso Night 174/347/680
 - 公開: tanabata-soft/6tbherc3zg（public）→ https://tanabata-soft.github.io/6tbherc3zg/
+
+## v1.3.0（2026-11-19）
+- 記録のバックアップ機能を削除（オーナー判断）。UI・src/backup.ts・storage の export/import・reloadSound/reloadVibrate・関連テスト/E2E/shots を撤去。SCHEMA_VERSION は storage.ts へ移設。テンプレート標準からの意図的な逸脱として CLAUDE.md / HANDOVER.md に明記（再追加しない）
+- 設定ボタンを題字の右上からメニュー下部のフッターへ移動（横幅のある控えめなボタン。インストール案内・バージョン表示と並ぶ）。設定モーダルの中身・挙動は不変
+- 検証: verify 全通過（単体43件）、E2E 17件通過、shots 12枚＋メニュー全画面で目視確認済み
+- 詳細は docs/HANDOVER.md を参照
 
 ## v1.2.0（2026-11-19）
 - アプリ名を『木曽リズムゲーム』から『木曽ケイジビート』へ変更（表示名のみ。package.json の name＝アプリID `kiso-rhythm-game` は据え置きで、保存データ・キャッシュ互換は維持）。副題「ニコラスケイジと木曽と私」を題字の下に表示

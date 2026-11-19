@@ -5,10 +5,10 @@ import { Game, type GameResult } from './game';
 import { exposeTestApi, setData, setupDebug } from './debug';
 import { setupInstallGuide } from './install';
 import { setupUpdateBanner } from './pwa';
-import { isSoundOn, reloadSound, setSound } from './sound';
-import { isVibrateOn, reloadVibrate, setVibrate } from './haptics';
+import { isSoundOn, setSound } from './sound';
+import { isVibrateOn, setVibrate } from './haptics';
 import { audioState, isUnlocked, unlockAudio } from './audio';
-import { exportBackup, importBackup, load, migrateStorage, requestPersist, save } from './storage';
+import { load, migrateStorage, requestPersist, save } from './storage';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -205,35 +205,6 @@ $('again-button').addEventListener('click', () => {
 $('back-button').addEventListener('click', () => {
   show('menu');
   renderMenu();
-});
-
-// ---- バックアップ ----
-$('backup-export').addEventListener('click', () => {
-  const blob = new Blob([exportBackup()], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${__APP_ID__}-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-});
-$<HTMLInputElement>('backup-import').addEventListener('change', async (e) => {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  const message = $('backup-message');
-  try {
-    const n = importBackup(await file.text());
-    offsetMs = clampOffset(load<number>('offset', 0));
-    selectedSong = load<SongId>('song', 'highway');
-    selectedDiff = load<Difficulty>('difficulty', 'easy');
-    reloadSound();
-    reloadVibrate();
-    renderMenu();
-    message.textContent = `${n} 件の記録を読み込みました`;
-  } catch (err) {
-    message.textContent = err instanceof Error ? err.message : '読み込めませんでした';
-  }
-  input.value = '';
 });
 
 // 初回のタップで音声を unlock する（iPhone ではジェスチャの中で AudioContext を起こす必要がある）

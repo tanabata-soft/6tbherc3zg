@@ -25,7 +25,6 @@
         <header class="brand">
           <div class="brand-top">
             <p class="brand-en" aria-hidden="true">KISO CAGE BEAT</p>
-            <button id="settings-open" type="button" class="settings-open" aria-haspopup="dialog" aria-controls="settings-dialog"><span aria-hidden="true">⚙</span> 設定</button>
           </div>
           <h1>木曽ケイジビート</h1>
           <p class="brand-sub">ニコラスケイジと木曽と私</p>
@@ -56,17 +55,14 @@
         <p id="start-status" class="muted" role="status"></p>
         <p class="note howto">ノーツが下の枠に重なったらタップ（パソコンは D / F / J / K）。左上の ✕ で中断できます。</p>
 
-        <details class="backup">
-          <summary>記録のバックアップ</summary>
-          <p class="muted">記録は、このブラウザの中にだけ保存されています。ファイルに残しておくと、消えたときに戻せます。</p>
-          <button id="backup-export" type="button">ファイルに書き出す</button>
-          <label class="file-button">ファイルから読み込む<input id="backup-import" type="file" accept="application/json,.json" hidden></label>
-          <p id="backup-message" class="muted" role="status"></p>
-        </details>
+        <!-- フッター: 設定・インストール案内・バージョン（ポスター型のファーストビューを崩さないよう、画面の下部にまとめる） -->
+        <footer class="menu-footer">
+          <button id="settings-open" type="button" class="settings-open" aria-haspopup="dialog" aria-controls="settings-dialog"><span aria-hidden="true">⚙</span> 設定</button>
 
-        <button id="install-open" type="button" class="link">📲 アプリとしてインストールする方法</button>
+          <button id="install-open" type="button" class="link">📲 アプリとしてインストールする方法</button>
 
-        <p class="muted version" id="version-line">v<span id="version"></span></p>
+          <p class="muted version" id="version-line">v<span id="version"></span></p>
+        </footer>
       </div>
 
       <!-- ゲーム画面 -->
@@ -124,7 +120,7 @@
       <button type="button" data-close>とじる</button>
     </dialog>
 
-    <!-- 設定（メニュー右上の設定ボタンから開く） -->
+    <!-- 設定（メニュー下部の設定ボタンから開く） -->
     <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
       <div class="dialog-head">
         <h2 id="settings-title">設定</h2>

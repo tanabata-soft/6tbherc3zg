@@ -1,5 +1,5 @@
 // ヒット時の振動（navigator.vibrate）。対応していない環境（iPhone Safari など）では何もしない。
-// オン/オフ設定は効果音と同じ作法で storage に保存する（バックアップにも含まれる）。
+// オン/オフ設定は効果音と同じ作法で storage に保存する。
 import { load, save } from './storage';
 import type { Judge } from './logic';
 
@@ -15,11 +15,6 @@ export const isVibrateOn = (): boolean => enabled;
 export function setVibrate(on: boolean): void {
   enabled = on;
   save('vibrate', on);
-}
-
-/** バックアップの読み込み後に、保存されている値へ合わせ直す */
-export function reloadVibrate(): void {
-  enabled = load('vibrate', true);
 }
 
 /** ヒットした瞬間に短く振動させる。非対応環境・オフのときは何もしない。 */

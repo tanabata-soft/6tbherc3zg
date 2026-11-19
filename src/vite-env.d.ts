@@ -2,7 +2,7 @@
 
 declare const __APP_VERSION__: string;
 
-/** package.json の name。保存データのキー・バックアップの app 名の元（vite.config.ts が埋め込む） */
+/** package.json の name。保存データのキーの接頭辞の元（vite.config.ts が埋め込む） */
 declare const __APP_ID__: string;
 
 interface Window {

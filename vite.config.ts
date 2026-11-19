@@ -16,7 +16,7 @@ export default defineConfig({
   // 画面に表示するバージョン（package.json の version）
   define: {
     __APP_VERSION__: JSON.stringify(version),
-    // アプリの ID（package.json の name）。保存データのキー・バックアップの app 名・起動失敗の復旧の範囲に使う。
+    // アプリの ID（package.json の name）。保存データのキーの接頭辞・起動失敗の復旧の範囲に使う。
     // GitHub Pages では、すべてのアプリが同じサイトに載るので、アプリごとに別の名前にする。
     __APP_ID__: JSON.stringify(appId),
   },
