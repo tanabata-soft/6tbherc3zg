@@ -2,7 +2,7 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.9.0
+更新: 2026-11-19・版 v1.9.1
 
 ## 今の状態
 
@@ -12,6 +12,12 @@
 - 曲: 『石畳のハイウェイ』(BPM 135) / 『Kiso Night Silhouette』(BPM 150)。**v1.6.0 から音ゲー用ショート編集**（石畳 104.8秒 / Kiso Night 127.7秒。全長版は `assets-full/` に保管、編集手順は `assets-full/README.md`）
   - 譜面は `scripts/generate-charts.py`（librosa）で生成（v4方式＝両親指前提＋FEVER 密度上げ、下記）。ノーツ数: 石畳 146/287/370、Kiso Night 202/384/498（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96]、Kiso Night [44,67][96,127]（秒、編集後のタイムライン）
+- v1.9.1 の変更:
+  - **バックグラウンド復帰後にタッチが効かなくなる不具合を修正**（オーナー実機報告: 復帰後に READY 表示のまま固まる）。原因: ①`start()` が非同期（loadBuffer / resumeAudio の await）で、その合間にバックグラウンドへ回ると `playing` がまだ立っておらず `abort()` が素通りし、その後 start が完了して止まった AudioContext の時計のまま READY で凍っていた ②復帰時に AudioContext を resume する処理がなかった ③裏にいる間に pointerup / keyup を取りこぼすと `pointerLanes` / `keyLanes` に押下状態が残り、保持中ホールドも 'holding' のまま残った。対策（すべて `src/game.ts`）: `startSession`（世代番号）を導入し、`abort()` は演奏中でなくても世代を進めて進行中の start を取り消す／start 完了時点で世代が古いか画面が hidden なら演奏を作らずメニューへ戻す／`resetInput()`（ポインタ・キーの押下状態を消し、保持中ホールドは releaseHold で猶予へ移して連打音を止める）を hidden・pagehide・blur で呼ぶ／visible・focus で `resumeAudio()`／`lostpointercapture` も pointerup と同じ処理／演奏ループで「前面なのに AudioContext が running でない」状態を壁時計で 1 秒に 1 回検出して resume を試みる。E2E に模擬テスト（visibilityState を差し替えて hidden→visible を再現し、再開後のキー入力で空タップ音が鳴ること）を追加。**本物のバックグラウンド遷移・割り込みはヘッドレスで再現できないため、最終確認は iPhone 実機**（次にやること 1）。
+  - **通常ヒット音を F案（8bit）に戻した**（オーナー指示「タッチオン音は元に戻して」）。v1.8.5 のタンバリン（E案）は不採用: `TAMB_*` / `tambourineFor` / `playTambourine` を削除し、v1.8.4 以前の `HIT_BLIP` / `hitToneFor` を復元（矩形波 2 音 1568Hz→2093Hz、PERFECT 0.22 / GREAT 0.17 / GOOD は 1 音目のみ 1397Hz・0.12、tier で +1 半音/tier・上限 +4、`app:sound` の hit detail に frequency が戻った）。単体テストも F案仕様に戻した。長押し連打・完走・失敗・空タップの音は変更なし。v1.8.5 の節のタンバリンの記述は履歴として残す（現行ではない）。
+  - **ケージ背景の包絡を「ふわっと」に**: `CAGE_BG_FADE_IN_SEC` 0.3→0.9 秒、`CAGE_BG_FADE_OUT_SEC` 0.6→0.8 秒、包絡は線形から smoothstep に変更（`src/game.ts` の `smoothstep`）。滞在は `CAGE_BG_DURATION_SEC` 2.9→3.7 秒（キープ約 2.0 秒）/ `CAGE_BG_DURATION_BIG_SEC` 3.6→4.4 秒（キープ約 2.7 秒）。`src/main.ts` の `CAGE_SHOW_MS` 3700 / `CAGE_SHOW_BIG_MS` 4400 と CSS の cage-fade（3.7 秒、キーフレーム 24.3% / 78.4%、ease-in-out）/ cage-fade-big（4.4 秒、20.5% / 81.8%）の 3 か所を一致させた。v1.8.6 の節の包絡の数値は旧値（現行は本節）。
+  - **通常背景（ジャケット）の切り抜きを変更**: 従来は cover で画面いっぱいに拡大していたため、正方形ジャケットの左右が切れ、絵の中の曲タイトル文字（「石畳のハイウェイ」「THE KISO VALLEY」）が左端で切れていた（オーナー実機スクリーンショット）。`drawJacketBackground()` を新設し、ジャケット全体が横幅に収まる大きさで上下中央に描き、余りは同じ絵を 24×24 に縮小したキャンバスを拡大して敷くぼかしで埋める（ctx.filter の blur は iPhone Safari で効かないため使わない。ぼかしキャンバスは曲が変わったら作り直す）。ベール（.62 / FEVER .35）は従来どおり後に描く。**ケージ背景の切り抜きは変更なし**（従来どおり全面 cover）。shots の game 画面（石畳）と一時撮影（Kiso Night）で、両曲ともタイトル全体が収まることを確認済み。
+  - **50 コンボ専用の演出は存在しないことを確認**（コード全体を検索。登場判定は 30 コンボ刻みのみで、50 はコンボ tier の境界値としてのみ現れる。オーナー指示どおり）。
 - v1.9.0 の変更:
   - **譜面を全面作り替え（生成方式 v4＝両親指前提）**（オーナー指示「基本両手（両親指）でやることを前提にやりやすい譜面にして」）。レーン 0・1 を左親指、2・3 を右親指が受け持つ前提で、ハード制約を生成器（`scripts/generate-charts.py`）に組み込んだ。制約の正本は新設の `scripts/check-two-thumb.py`、設計の根拠は `docs/CHART-DESIGN.md` の「両親指前提（譜面 v4）」節。要点: C1 同時押しは左右ペア（0+2 / 0+3 / 1+2 / 1+3）だけ（相方は反対側から選ぶ。同側ペア禁止）／C2 長押しの帯の中は反対側のノーツだけ（同時押しの時刻をまたぐ長押しは置かない。帯の中の同側除去はスナップ後の事後修復でも実施）／C3a 16分の連なりで同側3連なし（トリルは左右交互 0↔2・1↔3 系に変更、wave16 は [0,1,3,2,1,0,2,3] に変更、フィット罰金＋導出後の修復で担保）／C3b 片手トリルは8分以下で4連まで／C4 縦連は従来ルール維持。パターン語彙・モチーフ反復・密度連動・入れ子・タイミング合わせ（実測拍列の補間＋スナップ±38ms）は v3 を引き継ぐ。
   - **生成後の検証が組み込みになった**: 生成器は書き出し前に `check-two-thumb.py` の `check_charts()` で全譜面を検証し、違反があれば charts.json を書かずに終了する。単体でも `.venv/bin/python scripts/check-two-thumb.py` で実行できる。v3 譜面では違反112件（hard の同側ペア・帯の中の同側ノーツ・同側3連など）→ v4 では 0 件。
@@ -95,7 +101,7 @@
   - **記録のバックアップ機能を削除した**（オーナー判断「いらない」）。メニューの書き出し／読み込み UI、`src/backup.ts`、`storage.ts` の export/import、バックアップ読み込み後に合わせ直す `reloadSound` / `reloadVibrate`、関連する単体テスト・E2E・shots の backup 画面をすべて撤去。**テンプレート標準からの意図的な逸脱。再追加しない**（CLAUDE.md の「このアプリ固有の決まり」にも明記）。保存データの版番号（`SCHEMA_VERSION`）は `src/storage.ts` が持つよう移した。保存そのもの（ベストスコア・オフセット・効果音/振動）は従来どおり端末内のみ。
   - **設定ボタンをメニュー下部のフッターへ移動**（上の設定モーダルの項を参照）。モーダルの中身と開閉の挙動は不変。
 - 公開 URL: https://tanabata-soft.github.io/6tbherc3zg/（リポジトリ: tanabata-soft/6tbherc3zg、public）
-- 検証: `npm run verify` 全通過（単体テスト101件、うちホールド16件・譜面の整合検証18件・歌詞5件・ケージのパターン決定3件・音まわりはタンバリンのパラメータ検証と連打・空タップの検証を含む）、両親指チェッカー（`scripts/check-two-thumb.py`）で違反 0 件、E2E 24件全通過（長押し系2件はゲーム側 songMs 駆動に直して安定化。実時間テストの従来からの揺れは残るため describe にリトライ2回が設定済み）、オートプレイ全通し（`scripts/verify-autoplay-full.mjs`）で両曲・hard がフルコンボ完走、shots 15枚でゲーム画面・game-combo（100コンボ・ghostrider の背景がピークで完全に置き換わり、判定枠・ラインが明瞭＋上部のセリフピル）・ホーム（タイトル「キソケイジビート」、尺表示 1:45）を目視確認済み（通常登場の treasure 背景のピークでも、暗幕の補正込みでノーツが埋もれないことも追加の一時撮影で確認）。設定モーダルはデバッグ ON 状態も一時撮影で確認（phone は全項目が収まり、SE はダイアログ内スクロールで「閉じる」まで届く）
+- 検証: v1.9.1 では lint・build・check:dist・check:content は通過。単体テストは 100 件中 99 件通過で、残る 1 件（tests/layer-rules の ESLint 起動テスト）は VM の高負荷時に 5 秒タイムアウトする既存の揺れ（変更前の v1.9.0 ツリーでも同じ失敗を再現確認済み。単独実行では通過。CI で最終確認）。E2E は 25 件全通過（4173 が別ワークツリーのプレビュー使用中のため、ポートだけ 4175 に変えた一時設定で実施。新規のバックグラウンド復帰の模擬テストを含む）。shots 15枚＋Kiso Night の一時撮影で、両曲の演奏画面のジャケットのタイトルが全体収まること、game-combo（100コンボ・ghostrider の背景ピーク）・ホームの崩れがないことを目視確認済み
 - 単体プレビュー: `dist-preview/preview.html`（約8.3MB）
 
 ## やりかけ
@@ -104,9 +110,9 @@
 
 ## 次にやること(優先順)
 
-1. **iPhone 実機で音が出るか再確認する**（v1.2.0 の音声対策の最終確認。マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）。v1.8.2 の文字選択禁止（長押しでコールアウトや選択が出ないか）も実機で確認する。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.3.0）も見る。振動は Android 実機で確認する
+1. **iPhone 実機で確認する**: ①v1.9.1 のバックグラウンド復帰（演奏中・READY 中にホームへ戻る／画面ロック／着信などを挟んで復帰し、固まらず遊べるか。ヘッドレスでは本物の遷移を再現できないため最優先）②音が出るか（v1.2.0 の音声対策の最終確認。マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）③v1.9.1 で戻した F案ヒット音の聞こえ方 ④v1.8.2 の文字選択禁止（長押しでコールアウトや選択が出ないか）。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.3.0）も見る。振動は Android 実機で確認する
 2. 遊んだ感触で譜面の密度や FEVER 区間を調整したくなったら、`scripts/generate-charts.py` の SONGS の fever（区間）や定数（HARD_CAP / NORMAL_CAP / EASY_CAP、パターンの確率）を変えて再生成し、版を上げて公開する（生成方式は v4＝両親指前提。固定間隔グリッドに戻さない。両親指制約は `scripts/check-two-thumb.py` が正本で、生成時に自動検証される。設計の根拠は docs/CHART-DESIGN.md）。再生成したら `scripts/verify-autoplay-full.mjs` の全通し確認も回すこと
-3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の TAMB_PARTIALS / TAMB_GRAINS / TAMB_AIR / TAMB_JUDGE・tambourineFor（通常タップのタンバリン音）/ HOLD_BLIP・HOLD_STREAM（長押しの連打）/ EMPTY_BLIP（空タップ音）/ COMPLETE_BLIP / FAIL_BLIP、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、ケージのパターン・ズーム種別は `src/logic.ts` の CAGE_PATTERN_ROTATION / CAGE_BIG_PATTERNS / CAGE_PATTERN_ZOOM、背景の濃さ・ズーム量・滞在時間は `src/game.ts` の CAGE_BG_* 定数、セリフは `src/main.ts` の CAGE_PATTERN_LINES、滞在時間は `src/main.ts` の CAGE_SHOW_MS と `src/style.css` の cage-fade の duration も合わせる、`src/game.ts` の演出の定数（RING_LIFE など）を変える
+3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_BLIP・hitToneFor（通常タップの F案 8bit 音。v1.9.1 でタンバリンから戻した）/ HOLD_BLIP・HOLD_STREAM（長押しの連打）/ EMPTY_BLIP（空タップ音）/ COMPLETE_BLIP / FAIL_BLIP、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、ケージのパターン・ズーム種別は `src/logic.ts` の CAGE_PATTERN_ROTATION / CAGE_BIG_PATTERNS / CAGE_PATTERN_ZOOM、背景の濃さ・ズーム量・滞在時間は `src/game.ts` の CAGE_BG_* 定数、セリフは `src/main.ts` の CAGE_PATTERN_LINES、滞在時間は `src/main.ts` の CAGE_SHOW_MS と `src/style.css` の cage-fade の duration も合わせる、`src/game.ts` の演出の定数（RING_LIFE など）を変える
 
 ## 注意・気づいたこと
 
