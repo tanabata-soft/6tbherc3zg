@@ -38,7 +38,7 @@ const SCREENS = [
       await page.click('#start-button');
       await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
       await page.evaluate(() => globalThis.__pwaTest.setCombo(100));
-      // ケージ登場のピーク（フェードイン 0.3秒を過ぎ、不透明度 1.0 でキープ中）に撮る
+      // ケージ登場のピーク（フェードイン 0.9秒を過ぎ、不透明度 1.0 でキープ中）に撮る
       await page.waitForTimeout(1000);
     },
   },

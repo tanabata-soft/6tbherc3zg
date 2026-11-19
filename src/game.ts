@@ -155,16 +155,31 @@ const CAGE_BG_PEAK_ALPHA = 1;
  * ノーツ・判定枠・判定ラインはこの後に描くので影響を受けない。
  */
 const CAGE_BG_VEIL_ALPHA = 0.18;
-/** ケージ背景の包絡（秒）: フェードイン → ピークのままキープ → フェードアウト */
-const CAGE_BG_FADE_IN_SEC = 0.3;
-const CAGE_BG_FADE_OUT_SEC = 0.6;
+/**
+ * ケージ背景の包絡（秒）: フェードイン → ピークのままキープ → フェードアウト。
+ * v1.9.1 でイン/アウトをゆっくりにし（0.3/0.6 → 0.9/0.8）、入り方は包絡に
+ * smoothstep をかけて「ふわっと」させた（オーナー指示）。キープは従来並み。
+ */
+const CAGE_BG_FADE_IN_SEC = 0.9;
+const CAGE_BG_FADE_OUT_SEC = 0.8;
 /**
  * ケージ背景の滞在時間（秒）。main.ts の CAGE_SHOW_MS / CAGE_SHOW_BIG_MS と合わせる。
- * 通常は 0.3（イン）＋ 約2秒キープ ＋ 0.6（アウト）= 約2.9秒。
- * big はキープを長くして約3.6秒。
+ * 通常は 0.9（イン）＋ 約2秒キープ ＋ 0.8（アウト）= 約3.7秒。
+ * big はキープを長くして約4.4秒。
  */
-const CAGE_BG_DURATION_SEC = 2.9;
-const CAGE_BG_DURATION_BIG_SEC = 3.6;
+const CAGE_BG_DURATION_SEC = 3.7;
+const CAGE_BG_DURATION_BIG_SEC = 4.4;
+/** 0→1 を両端でなだらかにする（ふわっとしたフェードの包絡用） */
+const smoothstep = (x: number): number => {
+  const c = Math.min(1, Math.max(0, x));
+  return c * c * (3 - 2 * c);
+};
+/**
+ * 通常背景（ジャケット）のぼかし下敷きの大きさ（px）。ジャケットをこの大きさに
+ * 縮小してから画面いっぱいに拡大すると、補間で自然にぼける。
+ * ctx.filter の blur は iPhone Safari で使えないため、この方式にする。
+ */
+const JACKET_BLUR_SIZE = 24;
 /**
  * 背景の中での push-in（奥から近づくズーム）。種別ごとに寄る速さと幅を変える。
  * power は ease-out の強さ（大きいほど最初に速く寄る）。背景なので行き過ぎや揺れは入れない。
@@ -184,6 +199,14 @@ export class Game {
   private raf = 0;
   private playing = false;
   private destroyed = false;
+  /**
+   * start() の世代番号。中断（abort）や再スタートのたびに進める。
+   * start() は await をまたぐため、合間にバックグラウンドへ回って中断されても、
+   * 古い start() が後から演奏を始めてしまわないようにする（v1.9.1）。
+   */
+  private startSession = 0;
+  /** 前面にいるのに AudioContext が止まっていたときの、resume 再試行の間引き（壁時計 ms） */
+  private lastResumeTryWall = 0;
 
   private entry: SongEntry | null = null;
   private difficulty: Difficulty = 'easy';
@@ -203,6 +226,9 @@ export class Game {
   private startAt = 0; // AudioContext 時刻（秒）
   private durationSec = 0;
   private bg: HTMLImageElement | null = null;
+  /** ジャケット背景のぼかし下敷き（小さいキャンバス。bg が変わったら作り直す） */
+  private bgBlur: HTMLCanvasElement | null = null;
+  private bgBlurFor: HTMLImageElement | null = null;
   private flash = [0, 0, 0, 0];
   private particles: Particle[] = [];
   private particlePool: Particle[] = [];
@@ -272,6 +298,15 @@ export class Game {
     if (this.playing) this.releaseLane(lane);
   };
 
+  private onLostPointerCapture = (e: PointerEvent): void => {
+    // ポインタ捕捉が強制的に外れたとき（バックグラウンド遷移など）は、
+    // pointerup が来ないことがある。捕捉を失った時点で「離した」扱いにする
+    const lane = this.pointerLanes.get(e.pointerId);
+    if (lane === undefined) return;
+    this.pointerLanes.delete(e.pointerId);
+    if (this.playing) this.releaseLane(lane);
+  };
+
   private onKeyDown = (e: KeyboardEvent): void => {
     if (!this.playing || e.repeat || this.autoplay) return;
     const lane = 'dfjk'.indexOf(e.key.toLowerCase());
@@ -288,9 +323,54 @@ export class Game {
   };
 
   private onVisibility = (): void => {
-    // プレイ中に画面が隠れたら、その場で演奏を止めてメニューへ（裏で進んで大量MISSにしない）
-    if (document.visibilityState === 'hidden' && this.playing) this.abort();
+    if (document.visibilityState === 'hidden') {
+      // プレイ中に画面が隠れたら、その場で演奏を止めてメニューへ（裏で進んで大量MISSにしない）。
+      // あわせて押下状態をリセットする: 裏にいる間に pointerup / keyup を取りこぼすと、
+      // 押されたままの状態が残り、復帰後にタッチが効かないように見える（v1.9.1 の不具合対応）
+      this.resetInput();
+      this.abort();
+    } else {
+      // 前面に戻ったら、止まっている AudioContext を起こす。ゲームの時計は
+      // AudioContext 基準なので、止まったままだと READY 表示のまま凍って見える
+      void resumeAudio();
+    }
   };
+
+  private onPageHide = (): void => {
+    // 画面ロックなど、visibilitychange が届かない経路でも演奏を止める
+    this.resetInput();
+    this.abort();
+  };
+
+  private onBlur = (): void => {
+    // フォーカスを失ったら押下状態だけリセットする（演奏の中断は visibility / pagehide に任せる）
+    this.resetInput();
+  };
+
+  private onFocus = (): void => {
+    // 復帰時に AudioContext の resume を確実に行う
+    void resumeAudio();
+  };
+
+  /**
+   * 押下状態（ポインタ・キー）をすべてリセットする。バックグラウンド遷移や
+   * フォーカス喪失で pointerup / keyup を取りこぼしたときに、押されたままの
+   * 状態が残って入力が固まったように見えるのを防ぐ。
+   * 保持中の長押しは「離した」扱いにして猶予（grace）へ移すので、
+   * リセット自体でいきなり失敗にはならない（中断が続けば、そのまま演奏ごと終わる）。
+   */
+  private resetInput(): void {
+    this.pointerLanes.clear();
+    this.keyLanes.clear();
+    if (!this.playing) return;
+    const nowMs = (nowSeconds() - this.startAt) * 1000;
+    for (const n of this.notes) {
+      if (n.holdPhase === 'holding') {
+        releaseHold(n, nowMs);
+        stopHoldSound(n);
+      }
+    }
+  }
 
   constructor(canvas: HTMLCanvasElement, cb: GameCallbacks) {
     this.canvas = canvas;
@@ -302,9 +382,13 @@ export class Game {
     canvas.addEventListener('pointermove', this.onPointerMove);
     canvas.addEventListener('pointerup', this.onPointerUp);
     canvas.addEventListener('pointercancel', this.onPointerUp);
+    canvas.addEventListener('lostpointercapture', this.onLostPointerCapture);
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     document.addEventListener('visibilitychange', this.onVisibility);
+    window.addEventListener('pagehide', this.onPageHide);
+    window.addEventListener('blur', this.onBlur);
+    window.addEventListener('focus', this.onFocus);
     // ケージの絵は、初回の登場で読み込み待ちにならないよう先読みしておく
     for (const pattern of Object.keys(CAGE_BG_URLS) as CagePattern[]) cageBgImage(pattern);
   }
@@ -319,9 +403,13 @@ export class Game {
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.canvas.removeEventListener('pointercancel', this.onPointerUp);
+    this.canvas.removeEventListener('lostpointercapture', this.onLostPointerCapture);
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     document.removeEventListener('visibilitychange', this.onVisibility);
+    window.removeEventListener('pagehide', this.onPageHide);
+    window.removeEventListener('blur', this.onBlur);
+    window.removeEventListener('focus', this.onFocus);
   }
 
   get isPlaying(): boolean {
@@ -343,8 +431,9 @@ export class Game {
   async start(entry: SongEntry, difficulty: Difficulty, offsetMs: number, autoplay = false): Promise<void> {
     // スタート操作のジェスチャの中で呼ばれる前提で、まず音声を unlock する
     unlockAudio();
+    const session = ++this.startSession;
     const buf = await loadBuffer(entry.audioUrl);
-    if (this.destroyed) return;
+    if (this.destroyed || session !== this.startSession) return;
     this.entry = entry;
     this.difficulty = difficulty;
     this.autoplay = autoplay;
@@ -383,6 +472,14 @@ export class Game {
     // その場合は復帰した時点でスケジュールどおり鳴り始める）
     await resumeAudio();
     if (this.destroyed) return;
+    if (session !== this.startSession || document.visibilityState === 'hidden') {
+      // 読み込みの合間にバックグラウンドへ回って中断されていた（または今も裏にいる）。
+      // このまま演奏を始めると、止まった時計のまま READY で凍ったように見えるので、
+      // 演奏は作らずメニューへ戻す（v1.9.1 の不具合対応）
+      setData('game', 'menu');
+      this.cb.onAbort();
+      return;
+    }
     this.startAt = nowSeconds() + READY_SECONDS;
     this.lastFrameAt = nowSeconds();
     playBuffer(buf, this.startAt);
@@ -395,6 +492,9 @@ export class Game {
 
   /** 演奏を止めてメニューに戻る（結果は残さない） */
   abort(): void {
+    // 進行中の start() があれば取り消す（await の合間に中断されても、
+    // 後から演奏が始まってしまわないように。演奏中でなければ世代を進めるだけ）
+    this.startSession++;
     if (!this.playing) return;
     this.playing = false;
     cancelAnimationFrame(this.raf);
@@ -612,6 +712,42 @@ export class Game {
     }
   }
 
+  /**
+   * 通常背景（ジャケット）の描画。cover で画面いっぱいに拡大すると、正方形の
+   * ジャケット（1024×1024）の左右が切り取られ、絵の中の曲タイトル文字
+   * （「石畳のハイウェイ」「THE KISO VALLEY」）まで切れてしまう
+   * （オーナーの実機スクリーンショットで確認、v1.9.1 で修正）。
+   * ジャケット全体が横幅に収まる大きさで上下中央に描き、余った領域は
+   * 同じ絵をぼかして拡大したもので埋める（音楽アプリでよくある方式）。
+   * この後に従来どおりベール（暗幕）がかかるので、ノーツの視認性は変わらない。
+   * ケージ背景はこの方式の対象外（従来どおり全面 cover で置き換わる）。
+   */
+  private drawJacketBackground(W: number, H: number): void {
+    const img = this.bg;
+    if (!img) return;
+    const { g } = this;
+    // ぼかしの下敷き: 小さいキャンバスへ縮小したものを画面いっぱいに拡大して敷く
+    if (this.bgBlurFor !== img) {
+      const c = document.createElement('canvas');
+      c.width = JACKET_BLUR_SIZE;
+      c.height = JACKET_BLUR_SIZE;
+      const cg = c.getContext('2d');
+      if (cg) cg.drawImage(img, 0, 0, JACKET_BLUR_SIZE, JACKET_BLUR_SIZE);
+      this.bgBlur = c;
+      this.bgBlurFor = img;
+    }
+    if (this.bgBlur) {
+      const s = Math.max(W / JACKET_BLUR_SIZE, H / JACKET_BLUR_SIZE);
+      const w = JACKET_BLUR_SIZE * s;
+      const hh = JACKET_BLUR_SIZE * s;
+      g.drawImage(this.bgBlur, (W - w) / 2, (H - hh) / 2, w, hh);
+    }
+    // ジャケット本体: 全体が横幅に収まる大きさで、上下中央に置く
+    const scale = W / img.naturalWidth;
+    const h = img.naturalHeight * scale;
+    g.drawImage(img, 0, (H - h) / 2, W, h);
+  }
+
   private finish(): void {
     this.playing = false;
     cancelAnimationFrame(this.raf);
@@ -651,6 +787,16 @@ export class Game {
     const W = this.width;
     const H = this.height;
     const frameAt = nowSeconds();
+    // 前面にいるのに AudioContext が止まっている（iOS の割り込み＝着信等）と、
+    // ゲームの時計が凍って READY や譜面が止まったままになる。1秒に1回だけ
+    // resume を試みて復帰させる（間引きは時計自身が止まっているので壁時計で数える）
+    if (audioContext().state !== 'running') {
+      const wall = performance.now();
+      if (wall - this.lastResumeTryWall > 1000) {
+        this.lastResumeTryWall = wall;
+        void resumeAudio();
+      }
+    }
     // 経過時間（秒）。タブ復帰などで大きく飛んだときは 50ms に丸める
     const dt = Math.min(0.05, Math.max(0, frameAt - this.lastFrameAt));
     this.lastFrameAt = frameAt;
@@ -718,18 +864,16 @@ export class Game {
     g.fillStyle = '#0e1018';
     g.fillRect(0, 0, W, H);
     if (this.bg?.complete && this.bg.naturalWidth) {
-      const s = Math.max(W / this.bg.naturalWidth, H / this.bg.naturalHeight);
-      const w = this.bg.naturalWidth * s;
-      const hh = this.bg.naturalHeight * s;
-      g.drawImage(this.bg, (W - w) / 2, (H - hh) / 2, w, hh);
+      this.drawJacketBackground(W, H);
     }
     g.fillStyle = fever ? 'rgba(30,20,0,.35)' : 'rgba(6,8,16,.62)';
     g.fillRect(0, 0, W, H);
     // ケージ登場中は、絵を背景として敷く。レーン・ノーツはこの後に描くので、
     // ノーツは常にはっきり手前に見える（全面カットインの反省から v1.8.4 でこの形にした）。
     // v1.8.6 からはピーク不透明度 1.0 で背景（ジャケット絵＋ベール）が完全に置き換わり、
-    // 数秒そのままになる。出現・消滅は不透明度のフェード（イン 0.3秒 → キープ →
-    // アウト 0.6秒）、動きは背景の中でのゆっくりした push-in（奥から近づく）。
+    // 数秒そのままになる。出現・消滅は不透明度のフェード（v1.9.1 でイン 0.9秒 →
+    // キープ → アウト 0.8秒に延ばし、smoothstep でふわっとさせた）、
+    // 動きは背景の中でのゆっくりした push-in（奥から近づく）。
     // 表示中に次の登場が来た場合は、triggerCage が cageBg を新しいパターン・時刻で
     // 上書きするので、包絡は新しい登場の頭から再生される（重なって破綻はしない）。
     if (this.cageBg) {
@@ -740,9 +884,10 @@ export class Game {
       if (t >= 1) {
         this.cageBg = null;
       } else if (img.complete && img.naturalWidth) {
+        // 包絡は smoothstep で両端をなだらかにし、ふわっと出入りする（v1.9.1）
         const env = Math.max(
           0,
-          Math.min(elapsed / CAGE_BG_FADE_IN_SEC, (dur - elapsed) / CAGE_BG_FADE_OUT_SEC, 1),
+          Math.min(smoothstep(elapsed / CAGE_BG_FADE_IN_SEC), smoothstep((dur - elapsed) / CAGE_BG_FADE_OUT_SEC), 1),
         );
         const zp = CAGE_BG_ZOOM[this.cageBg.zoom];
         const eased = 1 - Math.pow(1 - t, zp.power);

@@ -268,6 +268,62 @@ test.describe('ヒット判定（実時間）', () => {
     await expect(page.locator('body')).toHaveAttribute('data-score', '0');
   });
 
+  test('バックグラウンド復帰を模しても、再開後のタップが効く', async ({ page }) => {
+    // v1.9.1 の不具合対応の確認: 実機では「バックグラウンドになって復帰すると
+    // タッチしても動かなくなる（READY のまま固まる）」が起きた。ブラウザでは
+    // 本物のバックグラウンド遷移は作れないので、visibilityState を差し替えて
+    // visibilitychange を発火させる模擬で、「隠れたら演奏が止まってメニューへ
+    // 戻る」「復帰後に新しく始めた演奏でタップが効く（空タップ音が鳴る）」を見る。
+    // 押下状態のリセットや AudioContext の resume の実機での効きは、実機確認が必要。
+    await page.goto('/?debug=1');
+    await page.evaluate(() => {
+      const w = window as unknown as { __sounds: { kind?: string }[] };
+      w.__sounds = [];
+      document.addEventListener('app:sound', (e) => w.__sounds.push((e as CustomEvent).detail));
+    });
+    await page.getByRole('button', { name: 'スタート' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+    // キーを押しっぱなし（keyup しない）にしてから、バックグラウンドへ移る
+    await page.evaluate(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('blur'));
+    });
+    // 演奏は止まり、メニューに戻る（裏で進んで大量ミスにならないための既存仕様）
+    await expect(page.locator('#menu-screen')).toBeVisible();
+    await expect(page.locator('body')).toHaveAttribute('data-game', 'menu');
+    // 復帰する
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('focus'));
+    });
+    // もう一度始めると、READY 中のキー入力で空タップ音が鳴る＝入力が生きている
+    await page.evaluate(() => {
+      const obs = new MutationObserver(() => {
+        if (document.body.dataset.game === 'playing') {
+          obs.disconnect();
+          window.setTimeout(() => {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+          }, 300);
+        }
+      });
+      obs.observe(document.body, { attributes: true, attributeFilter: ['data-game'] });
+    });
+    await page.getByRole('button', { name: 'スタート' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() =>
+            (window as unknown as { __sounds: { kind?: string }[] }).__sounds.map((s) => s.kind),
+          ),
+        { timeout: 10_000 },
+      )
+      .toContain('empty');
+  });
+
   test('ノーツに当たったタップでは空タップ音が鳴らない', async ({ page }) => {
     // 最初のタップノーツ（長押しでないもの。同レーンに前後 400ms 以内のノーツがないもの）を譜面から取る
     const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8')) as {

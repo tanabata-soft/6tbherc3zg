@@ -526,25 +526,27 @@ button:disabled {
 }
 
 /* 出現中はフェードイン→静止→フェードアウトを 1 本のアニメーションで通す。
-   包絡は game.ts の背景（フェードイン 0.3秒 → キープ → フェードアウト 0.6秒）と合わせる:
-   通常 2.9秒（10.3% でイン完了、79.3% からアウト）、big 3.6秒（8.3% / 83.3%） */
+   包絡は game.ts の背景（フェードイン 0.9秒 → キープ → フェードアウト 0.8秒、
+   v1.9.1 でふわっとさせた）と合わせる:
+   通常 3.7秒（24.3% でイン完了、78.4% からアウト）、big 4.4秒（20.5% / 81.8%）。
+   区間ごとに ease-in-out をかけ、game.ts 側の smoothstep と似た柔らかさにする */
 .cage-pop.show {
-  animation: cage-fade 2.9s linear forwards;
+  animation: cage-fade 3.7s ease-in-out forwards;
 }
 
 .cage-pop.big.show {
   animation-name: cage-fade-big;
-  animation-duration: 3.6s;
+  animation-duration: 4.4s;
 }
 
 @keyframes cage-fade {
   0% {
     opacity: 0;
   }
-  10.3% {
+  24.3% {
     opacity: 0.97;
   }
-  79.3% {
+  78.4% {
     opacity: 0.97;
   }
   100% {
@@ -556,10 +558,10 @@ button:disabled {
   0% {
     opacity: 0;
   }
-  8.3% {
+  20.5% {
     opacity: 0.97;
   }
-  83.3% {
+  81.8% {
     opacity: 0.97;
   }
   100% {
