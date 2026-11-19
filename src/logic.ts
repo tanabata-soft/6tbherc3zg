@@ -7,8 +7,11 @@ export type SongId = 'highway' | 'night';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 export type Judge = 'perfect' | 'great' | 'good' | 'miss';
 
-/** 譜面のノーツ。[時刻(ms), レーン(0-3)] */
-export type NoteData = readonly [number, number];
+/**
+ * 譜面のノーツ。[時刻(ms), レーン(0-3), 長押し(ms)?]
+ * 3要素目があるノーツは長押し（ホールド）で、頭からその時間だけ押し続ける。
+ */
+export type NoteData = readonly [number, number, number?];
 
 export interface ChartSet {
   easy: NoteData[];
@@ -95,15 +98,117 @@ export function rankFor(acc: number): Rank {
   return 'C';
 }
 
+/** 長押しの頭の判定（ミス以外） */
+export type HeadJudge = Exclude<Judge, 'miss'>;
+
+/** 長押しの進行状態。none=未開始（通常ノーツもこれ） */
+export type HoldPhase = 'none' | 'holding' | 'grace' | 'done' | 'failed';
+
 /** プレイ中のノーツ。state: 0=未判定, 1=ヒット, 2=ミス */
 export interface PlayNote {
   timeMs: number;
   lane: number;
   state: 0 | 1 | 2;
+  /** 長押しの長さ (ms)。0 は通常ノーツ */
+  holdMs: number;
+  /** 長押しの頭の判定。頭を押したときだけ入る */
+  headJudge: HeadJudge | null;
+  /** 長押しの進行状態 */
+  holdPhase: HoldPhase;
+  /** grace（離し直しの猶予）に入った時刻 (ms) */
+  graceStartMs: number;
+  /** tick スコアの間隔 (ms)。beginHold で決まる */
+  tickMs: number;
+  /** 次に tick スコアが入る時刻 (ms) */
+  nextTickMs: number;
 }
 
 export function makePlayNotes(chart: NoteData[], offsetMs: number): PlayNote[] {
-  return chart.map(([t, lane]) => ({ timeMs: t + offsetMs, lane, state: 0 }));
+  return chart.map(([t, lane, hold]) => ({
+    timeMs: t + offsetMs,
+    lane,
+    state: 0 as const,
+    holdMs: hold ?? 0,
+    headJudge: null,
+    holdPhase: 'none' as const,
+    graceStartMs: 0,
+    tickMs: 0,
+    nextTickMs: 0,
+  }));
+}
+
+// ---- 長押し（ホールド）の状態遷移。仕様は docs/CHART-DESIGN.md ----
+
+/** 離してから押し直すまでの猶予 (ms)。指のブレ対策 */
+export const HOLD_GRACE_MS = 100;
+/** 押し続けている間に1拍ごとに入るスコア */
+export const HOLD_TICK_SCORE = 100;
+/** 押し切ったときのボーナス（頭のスコアの半分） */
+export const HOLD_COMPLETE_BONUS: Record<HeadJudge, number> = { perfect: 500, great: 350, good: 200 };
+
+/** 頭を押して長押しを開始する。tickMs は1拍の長さ */
+export function beginHold(note: PlayNote, judge: HeadJudge, tickMs: number): void {
+  note.headJudge = judge;
+  note.holdPhase = 'holding';
+  note.tickMs = tickMs;
+  note.nextTickMs = note.timeMs + tickMs;
+}
+
+/** 押し続けている途中で離した。猶予（grace）に入る */
+export function releaseHold(note: PlayNote, nowMs: number): void {
+  if (note.holdPhase !== 'holding') return;
+  note.holdPhase = 'grace';
+  note.graceStartMs = nowMs;
+}
+
+/** 猶予中に押し直した。復帰できたら true */
+export function repressHold(note: PlayNote, nowMs: number): boolean {
+  if (note.holdPhase !== 'grace') return false;
+  if (nowMs - note.graceStartMs > HOLD_GRACE_MS) return false;
+  note.holdPhase = 'holding';
+  // 猶予の間に来た拍境界は捨てる（tick は押せている間だけ数える）
+  while (note.tickMs > 0 && note.nextTickMs <= nowMs) note.nextTickMs += note.tickMs;
+  return true;
+}
+
+export interface HoldAdvance {
+  /** 今回入った tick スコアの回数 */
+  ticks: number;
+  /** 押し切った */
+  completed: boolean;
+  /** 失敗した（猶予を過ぎても押し直されなかった） */
+  failed: boolean;
+}
+
+/**
+ * 長押しの時間を進める。毎フレーム nowMs で呼ぶ。
+ * tick は「押せている間」だけ数える（grace 中に来た拍境界は捨てる）。
+ * 離したまま尾を過ぎた場合も、猶予内に尾へ届いていれば完走扱いにする。
+ */
+export function advanceHold(note: PlayNote, nowMs: number): HoldAdvance {
+  const res: HoldAdvance = { ticks: 0, completed: false, failed: false };
+  if (note.holdPhase !== 'holding' && note.holdPhase !== 'grace') return res;
+  const tailMs = note.timeMs + note.holdMs;
+  const limit = Math.min(nowMs, tailMs);
+  while (note.tickMs > 0 && note.nextTickMs <= limit) {
+    if (note.holdPhase === 'holding') res.ticks++;
+    note.nextTickMs += note.tickMs;
+  }
+  if (note.holdPhase === 'grace') {
+    if (nowMs >= tailMs && note.graceStartMs + HOLD_GRACE_MS >= tailMs) {
+      note.holdPhase = 'done';
+      res.completed = true;
+    } else if (nowMs - note.graceStartMs > HOLD_GRACE_MS) {
+      note.holdPhase = 'failed';
+      res.failed = true;
+    }
+    return res;
+  }
+  if (nowMs >= tailMs) {
+    note.holdPhase = 'done';
+    res.completed = true;
+  }
+  return res;
 }
 
 /**
@@ -157,6 +262,23 @@ export function validateCharts(song: SongData): string[] {
       const key = `${t}:${lane}`;
       if (seen.has(key)) errors.push(`${diff}: 同刻・同レーンの重複があります (${key})`);
       seen.add(key);
+    }
+    // 長押しの検証: 尾の余裕、同じレーンのノーツが帯の中に入らないこと、長押し同士の重なり
+    const holds = notes.filter((n) => (n[2] ?? 0) > 0);
+    for (const n of notes) {
+      if (n[2] !== undefined && n[2] <= 0) errors.push(`${diff}: 長押しの長さが不正です (${n[0]}ms)`);
+    }
+    for (const [t, lane, hold] of holds) {
+      const tail = t + (hold ?? 0);
+      if (tail > song.durationMs - 500) errors.push(`${diff}: 長押しの尾が曲の終わりに近すぎます (${t}ms)`);
+      for (const [t2, lane2] of notes) {
+        if (lane2 === lane && t2 > t && t2 <= tail) {
+          errors.push(`${diff}: 長押しの帯の中に同じレーンのノーツがあります (${t2}ms)`);
+        }
+      }
+      for (const [t2] of holds) {
+        if (t2 > t && t2 < tail) errors.push(`${diff}: 長押し同士が重なっています (${t}ms と ${t2}ms)`);
+      }
     }
     if (notes.length > 0) {
       if (notes[0][0] < 2000) errors.push(`${diff}: 最初のノーツがイントロの途中です (${notes[0][0]}ms)`);

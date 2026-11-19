@@ -5,13 +5,20 @@
 // 演出（粒子・輪・波紋・判定文字）はすべて経過時間ベースで進める（120Hz でも 60Hz と同じ見え方にする）。
 import {
   DIFFICULTIES,
+  FEVER_MULTIPLIER,
+  HOLD_COMPLETE_BONUS,
+  HOLD_TICK_SCORE,
   LANE_COLORS,
+  advanceHold,
+  beginHold,
   emptyCounts,
   findHit,
   isFever,
   makePlayNotes,
   rankFor,
   accuracy,
+  releaseHold,
+  repressHold,
   scoreFor,
   sweepMisses,
   type Difficulty,
@@ -116,6 +123,16 @@ export class Game {
   private lastFrameAt = 0; // 前フレームの AudioContext 時刻（秒）。dt の計算用
   private width = 0;
   private height = 0;
+  /** 押さえ中のポインタ（pointerId → レーン）。マルチタッチで長押ししながら他レーンを叩ける */
+  private pointerLanes = new Map<number, number>();
+  /** 押さえ中のキー（レーン） */
+  private keyLanes = new Set<number>();
+  private holdsCompleted = 0;
+  private holdsFailed = 0;
+
+  private laneAt(px: number): number {
+    return Math.min(3, Math.max(0, Math.floor(px / (this.width / 4))));
+  }
 
   private onPointerDown = (e: PointerEvent): void => {
     e.preventDefault();
@@ -127,14 +144,51 @@ export class Game {
       this.abort();
       return;
     }
-    const lane = Math.min(3, Math.max(0, Math.floor(px / (this.width / 4))));
-    this.tap(lane, px, py);
+    const lane = this.laneAt(px);
+    this.pointerLanes.set(e.pointerId, lane);
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // キャプチャできなくてもプレイは続行する
+    }
+    this.pressLane(lane, px, py);
+  };
+
+  private onPointerMove = (e: PointerEvent): void => {
+    if (!this.playing) return;
+    const prev = this.pointerLanes.get(e.pointerId);
+    if (prev === undefined) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const lane = this.laneAt(px);
+    if (lane === prev) return;
+    // 指がレーンをまたいだら、旧レーンは離した扱い、新レーンは押した扱いにする
+    this.pointerLanes.set(e.pointerId, lane);
+    this.releaseLane(prev);
+    this.pressLane(lane, px, py);
+  };
+
+  private onPointerUp = (e: PointerEvent): void => {
+    const lane = this.pointerLanes.get(e.pointerId);
+    if (lane === undefined) return;
+    this.pointerLanes.delete(e.pointerId);
+    if (this.playing) this.releaseLane(lane);
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {
-    if (!this.playing) return;
+    if (!this.playing || e.repeat) return;
     const lane = 'dfjk'.indexOf(e.key.toLowerCase());
-    if (lane >= 0) this.tap(lane);
+    if (lane < 0) return;
+    this.keyLanes.add(lane);
+    this.pressLane(lane);
+  };
+
+  private onKeyUp = (e: KeyboardEvent): void => {
+    const lane = 'dfjk'.indexOf(e.key.toLowerCase());
+    if (lane < 0) return;
+    this.keyLanes.delete(lane);
+    if (this.playing) this.releaseLane(lane);
   };
 
   private onVisibility = (): void => {
@@ -149,7 +203,11 @@ export class Game {
     this.g = g;
     this.cb = cb;
     canvas.addEventListener('pointerdown', this.onPointerDown);
+    canvas.addEventListener('pointermove', this.onPointerMove);
+    canvas.addEventListener('pointerup', this.onPointerUp);
+    canvas.addEventListener('pointercancel', this.onPointerUp);
     window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
     document.addEventListener('visibilitychange', this.onVisibility);
   }
 
@@ -159,7 +217,11 @@ export class Game {
     cancelAnimationFrame(this.raf);
     stopCurrent();
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    this.canvas.removeEventListener('pointermove', this.onPointerMove);
+    this.canvas.removeEventListener('pointerup', this.onPointerUp);
+    this.canvas.removeEventListener('pointercancel', this.onPointerUp);
     window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
     document.removeEventListener('visibilitychange', this.onVisibility);
   }
 
@@ -185,6 +247,12 @@ export class Game {
     this.pops = [];
     this.ripples = [];
     this.flash = [0, 0, 0, 0];
+    this.pointerLanes.clear();
+    this.keyLanes.clear();
+    this.holdsCompleted = 0;
+    this.holdsFailed = 0;
+    setData('holdsCompleted', 0);
+    setData('holdsFailed', 0);
     this.judgeText = '';
     this.judgeShownAt = -Infinity;
     this.durationSec = buf.duration;
@@ -219,7 +287,14 @@ export class Game {
     if (this.playing) this.finish();
   }
 
-  private tap(lane: number, rippleX?: number, rippleY?: number): void {
+  /** レーンが今も押されているか（ポインタ・キーのどちらか） */
+  private lanePressed(lane: number): boolean {
+    if (this.keyLanes.has(lane)) return true;
+    for (const l of this.pointerLanes.values()) if (l === lane) return true;
+    return false;
+  }
+
+  private pressLane(lane: number, rippleX?: number, rippleY?: number): void {
     // 保険: 再生中に AudioContext が止まっていたら（iOS の interrupted など）、タップのついでに戻す
     if (audioContext().state !== 'running') void resumeAudio();
     this.flash[lane] = 1;
@@ -233,11 +308,14 @@ export class Game {
       c: LANE_COLORS[lane],
     });
     const nowMs = (nowSeconds() - this.startAt) * 1000;
+    // 猶予（grace）中の長押しがあれば、新しいノーツより先に押し直しとして扱う
+    for (const n of this.notes) {
+      if (n.lane === lane && n.holdPhase === 'grace' && repressHold(n, nowMs)) return;
+    }
     const hit = findHit(this.notes, lane, nowMs);
     if (!hit) return;
     hit.note.state = 1;
     const fever = isFever(this.entry?.data.fever ?? [], nowMs / 1000);
-    this.counts[hit.judge]++;
     this.score += scoreFor(hit.judge, fever);
     this.combo++;
     this.maxCombo = Math.max(this.maxCombo, this.combo);
@@ -245,7 +323,22 @@ export class Game {
     this.burst(lane, hit.judge === 'perfect' ? 0 : hit.judge === 'great' ? 1 : 2, fever);
     playHitSound(hit.judge);
     vibrateHit(hit.judge);
+    if (hit.note.holdMs > 0) {
+      // 長押し: 集計（PERFECT等への加算）は押し切ったときに頭の判定で行う。コンボは頭で増やす
+      beginHold(hit.note, hit.judge, 60000 / (this.entry?.data.bpm ?? 120));
+    } else {
+      this.counts[hit.judge]++;
+    }
     setData('score', this.score);
+  }
+
+  /** レーンを離した。まだ他の入力で押されていなければ、長押しを猶予に入れる */
+  private releaseLane(lane: number): void {
+    if (this.lanePressed(lane)) return;
+    const nowMs = (nowSeconds() - this.startAt) * 1000;
+    for (const n of this.notes) {
+      if (n.lane === lane && n.holdPhase === 'holding') releaseHold(n, nowMs);
+    }
   }
 
   private showJudge(judge: Judge): void {
@@ -330,6 +423,31 @@ export class Game {
       this.showJudge('miss');
     }
 
+    // 長押しの進行: tick スコア（拍ごと）、押し切ったら頭の判定で集計＋ボーナス、失敗はミス
+    for (const n of this.notes) {
+      if (n.holdPhase !== 'holding' && n.holdPhase !== 'grace') continue;
+      const ev = advanceHold(n, nowMs);
+      if (ev.ticks > 0) {
+        this.score += ev.ticks * HOLD_TICK_SCORE * (fever ? FEVER_MULTIPLIER : 1);
+        setData('score', this.score);
+      }
+      if (ev.completed && n.headJudge) {
+        this.counts[n.headJudge]++;
+        this.score += HOLD_COMPLETE_BONUS[n.headJudge] * (fever ? FEVER_MULTIPLIER : 1);
+        this.holdsCompleted++;
+        setData('holdsCompleted', this.holdsCompleted);
+        setData('score', this.score);
+        this.burst(n.lane, n.headJudge === 'perfect' ? 0 : n.headJudge === 'great' ? 1 : 2, fever);
+      }
+      if (ev.failed) {
+        this.counts.miss++;
+        this.combo = 0;
+        this.showJudge('miss');
+        this.holdsFailed++;
+        setData('holdsFailed', this.holdsFailed);
+      }
+    }
+
     g.fillStyle = '#0e1018';
     g.fillRect(0, 0, W, H);
     if (this.bg?.complete && this.bg.naturalWidth) {
@@ -360,13 +478,71 @@ export class Game {
     }
     g.fillStyle = 'rgba(255,255,255,.85)';
     g.fillRect(0, hy - 2, W, 4);
+    const holdingLane = [false, false, false, false];
+    for (const n of this.notes) if (n.holdPhase === 'holding') holdingLane[n.lane] = true;
     for (let i = 0; i < 4; i++) {
       g.strokeStyle = LANE_COLORS[i];
       g.lineWidth = 3;
       g.strokeRect(i * lw + 8, hy - 14, lw - 16, 28);
+      if (holdingLane[i]) {
+        // 長押し中は判定枠を明るく太くして「押せている」ことを示す
+        g.globalAlpha = 0.65 + 0.35 * Math.sin(frameAt * 9);
+        g.strokeStyle = '#ffffff';
+        g.lineWidth = 2;
+        g.strokeRect(i * lw + 5, hy - 17, lw - 10, 34);
+        g.globalAlpha = 1;
+      }
+    }
+    // 長押しの帯（タップノーツより先に描く）。頭がラインに届いたら帯の下端はラインに吸着する
+    for (const n of this.notes) {
+      if (n.holdMs <= 0 || n.state === 2) continue;
+      if (n.holdPhase === 'done' || n.holdPhase === 'failed') continue;
+      const headY = hy - ((n.timeMs - nowMs) / 1000 / fall) * hy;
+      const tailMs = n.timeMs + n.holdMs;
+      const tailY = hy - ((tailMs - nowMs) / 1000 / fall) * hy;
+      if (headY < -40 || headY > H + 40) continue;
+      const c = LANE_COLORS[n.lane];
+      const cx = n.lane * lw + lw / 2;
+      const bw = lw - 36;
+      const bottom = n.state === 1 ? hy : headY;
+      const bodyTop = tailY + 7;
+      if (bottom > bodyTop) {
+        if (n.holdPhase === 'holding') {
+          g.globalAlpha = 0.3;
+          g.fillStyle = c;
+          g.beginPath();
+          g.roundRect(cx - bw / 2 - 6, bodyTop, bw + 12, bottom - bodyTop, 12);
+          g.fill();
+        }
+        g.globalAlpha =
+          n.holdPhase === 'holding' ? 0.95 : n.holdPhase === 'grace' ? 0.5 + 0.25 * Math.sin(frameAt * 28) : 0.55;
+        g.fillStyle = c;
+        g.beginPath();
+        g.roundRect(cx - bw / 2, bodyTop, bw, bottom - bodyTop, 9);
+        g.fill();
+        if (n.holdPhase === 'holding') {
+          g.globalAlpha = 0.55;
+          g.fillStyle = '#fff';
+          g.fillRect(cx - 2, bodyTop + 4, 4, Math.max(0, bottom - bodyTop - 8));
+          g.globalAlpha = 1;
+        } else {
+          g.globalAlpha = 1;
+        }
+      }
+      // 尾のキャップ
+      g.fillStyle = c;
+      g.beginPath();
+      g.roundRect(n.lane * lw + 10, tailY - 7, lw - 20, 14, 7);
+      g.fill();
+      // 頭のキャップ（未ヒットのときだけ。ヒット後はライン側に吸着する）
+      if (n.state === 0) {
+        g.beginPath();
+        g.roundRect(n.lane * lw + 8, headY - 14, lw - 16, 28, 8);
+        g.fill();
+      }
     }
     for (const n of this.notes) {
-      if (n.state !== 0) continue;
+      if (n.state !== 0 || n.holdMs > 0) continue;
       const y = hy - ((n.timeMs - nowMs) / 1000 / fall) * hy;
       if (y < -30 || y > H + 30) continue;
       g.fillStyle = LANE_COLORS[n.lane];
