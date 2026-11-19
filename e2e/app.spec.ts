@@ -190,32 +190,32 @@ test.describe('ヒット判定（実時間）', () => {
     const first = charts.highway.charts.easy.find((n) => (n[2] ?? 0) > 0);
     if (!first) throw new Error('長押しが譜面にありません');
     const hold = { t: first[0], lane: first[1] };
-    await page.goto('/');
+    await page.goto('/?debug=1');
     // 効果音の発火（連続音の開始・完走音）も app:sound イベントで確かめる
     await page.evaluate(() => {
       const w = window as unknown as { __sounds: { kind?: string }[] };
       w.__sounds = [];
       document.addEventListener('app:sound', (e) => w.__sounds.push((e as CustomEvent).detail));
     });
-    // playing になった瞬間を起点に、頭の前後でキーを繰り返し押して押し続ける（keyup しない）。
-    // 曲の時刻は playing の 2 秒後（READY）から進む前提。音声の開始が遅れても
-    // 判定窓（±160ms）にどれか1回が入るよう、頭の 300ms 前〜900ms 後まで 100ms ごとに送る
-    // （長押し中は同じレーンに他のノーツがないので、余分な押下は無害）。
+    // ゲーム側の songMs を見て、頭の 300ms 前からキーを繰り返し送って押し続ける
+    // （keyup しない）。壁時計の setTimeout で頭に合わせる方式は、ゲームの時計
+    // （AudioContext 基準）が負荷で壁時計から遅れる環境では窓を外してしまうため、
+    // タップのテストと同じく位置を見て押す（長押し中は同じレーンに他のノーツが
+    // ないので、余分な押下は無害）。
     await page.evaluate((h) => {
       const key = ['d', 'f', 'j', 'k'][h.lane];
-      const obs = new MutationObserver(() => {
-        if (document.body.dataset.game === 'playing') {
-          obs.disconnect();
-          window.setTimeout(() => {
-            let n = 0;
-            const iv = window.setInterval(() => {
-              window.dispatchEvent(new KeyboardEvent('keydown', { key }));
-              if (++n >= 13 || document.body.dataset.holdsCompleted === '1') window.clearInterval(iv);
-            }, 100);
-          }, 2000 + h.t - 300);
+      const api = (window as unknown as { __pwaTest?: { getState?: () => { songMs: number } } }).__pwaTest;
+      const iv = window.setInterval(() => {
+        if (document.body.dataset.holdsCompleted === '1') {
+          window.clearInterval(iv);
+          return;
         }
-      });
-      obs.observe(document.body, { attributes: true, attributeFilter: ['data-game'] });
+        const ms = api?.getState?.().songMs ?? -1;
+        if (document.body.dataset.game === 'playing' && ms >= h.t - 300) {
+          window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+          if (ms > h.t + 1500) window.clearInterval(iv);
+        }
+      }, 10);
     }, hold);
     await page.getByRole('button', { name: 'スタート' }).click();
     await expect(page.locator('body')).toHaveAttribute('data-holds-completed', '1', { timeout: 30_000 });
@@ -321,34 +321,42 @@ test.describe('ヒット判定（実時間）', () => {
   });
 
   test('長押しの帯が尾まで見え続ける（尾の間際まで帯が届く）', async ({ page }) => {
+    // 実時間再生（尾まで約8秒のゲーム内時間）＋時計が遅れる環境でも収まるよう長めに取る
+    test.setTimeout(120_000);
     // v1.7.1 の不具合修正の確認: 帯の描画を頭の仮想位置で打ち切っていたため、
     // 尾がラインに届く前に帯が消えていた（実測では帯の上端がラインの約129px 手前で停止）。
     // 完走するまでの間、帯の上端（＝尾）が判定ラインの 60px 以内まで近づくことを見る。
-    // 時刻ではなく空間で見るので、実時間テストの時計の寄れに左右されない。
+    // 測定自体は空間（ピクセル）だが、窓の制御は壁時計ではなくゲーム側の songMs で行う。
+    // ゲームの時計は AudioContext 基準で、負荷が高い環境では壁時計から大きく遅れる
+    // （実測で約0.72倍速まで落ちた）ため、壁時計前提だと窓が外れて帯を測り損ねる。
     const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8')) as {
       highway: { charts: { easy: [number, number, number?][] } };
     };
-    const first = charts.highway.charts.easy.find((n) => (n[2] ?? 0) > 0);
+    // 対象は「最も長い長押し」（帯が長いほど尾の接近を測りやすい。譜面 v4 で
+    // 最初の長押しが短いものに変わったため、最初の1本決め打ちはやめた）
+    const holds = charts.highway.charts.easy.filter((n) => (n[2] ?? 0) > 0);
+    const first = holds.reduce((a, b) => ((b[2] ?? 0) > (a[2] ?? 0) ? b : a), holds[0]);
     if (!first) throw new Error('長押しが譜面にありません');
     const hold = { t: first[0], lane: first[1], tail: first[0] + (first[2] ?? 0) };
     const LANE_HEX = ['#ff6b6b', '#ffd166', '#4ecdc4', '#6c8cff'];
     const rgb = [1, 3, 5].map((i) => parseInt((LANE_HEX[hold.lane] ?? '#ffffff').slice(i, i + 2), 16));
-    await page.goto('/');
+    await page.goto('/?debug=1');
     const sampling = page.evaluate(
       ({ h, rgb }) => {
         return new Promise<{ minGap: number }>((resolve) => {
           const done = { minGap: -1 };
+          const api = (window as unknown as { __pwaTest?: { getState?: () => { songMs: number } } }).__pwaTest;
+          const gameMs = () => api?.getState?.().songMs ?? -1;
           const obs = new MutationObserver(() => {
             if (document.body.dataset.game !== 'playing') return;
             obs.disconnect();
-            const t0 = performance.now();
-            // 頭ヒットを確実にするため、頭より十分前（曲の 3 秒）から 50ms ごとに
-            // キーを流し続ける（タイマーが負荷で寄れても、どれかは判定窓に入る）。
+            // 頭ヒットを確実にするため、頭の 500ms 前（ゲーム側 songMs 基準）から
+            // 50ms ごとにキーを流し続ける（どれかは判定窓に入る）。
             // 完走するか、尾を過ぎたら止める。途中の同じレーンのタップノーツに
             // 当たっても無害（長押し中は同じレーンに他のノーツはない）。
             const spam = window.setInterval(() => {
-              const songMs = performance.now() - t0 - 2000;
-              if (songMs >= 3000) {
+              const songMs = gameMs();
+              if (songMs >= h.t - 500) {
                 window.dispatchEvent(new KeyboardEvent('keydown', { key: ['d', 'f', 'j', 'k'][h.lane] }));
               }
               if (document.body.dataset.holdsCompleted === '1' || songMs > h.tail + 500) {
@@ -357,49 +365,67 @@ test.describe('ヒット判定（実時間）', () => {
             }, 50);
             const cv = document.getElementById('game-canvas') as HTMLCanvasElement;
             const cg = cv.getContext('2d');
-            // レーン中央付近の3列で、判定ラインの 20px 上より上にある最初のレーン色
-            // ピクセルを探し、ラインまでの距離（CSS px）の最小値を記録する。
-            // 判定枠の上端（ラインの 14px 上）は混ざるので走査から外す。
-            // 読み取りは列単位（全画面コピーはメインスレッドを圧迫するのでしない）。
-            const topGapCss = (): number => {
+            // 判定ラインの直上（20px 上）から上へ、レーン色が連続する区間の上端までの
+            // 距離（CSS px）を測る。長押し中は帯がラインに接して一体に描かれるため、
+            // この上端が帯の尾（キャップの上端）になる。帯より上にある後続ノーツは
+            // 帯と連続しないので、尾が隠れて測れなくなることはない（従来の「最上端の
+            // 一致ピクセル」方式は、後続ノーツが上にある間そちらを拾ってしまい、
+            // 尾の接近を捉え損ねた）。判定枠の上端（ラインの 14px 上）に当たらない
+            // よう、起点はラインの 20px 上にする。
+            // 読み取りは3列を含む細い帯を1回で読む（getImageData は描画と競合して
+            // 重いので、毎フレーム・複数回は呼ばない）。
+            const bandGapCss = (): number => {
               if (!cg || cv.width === 0) return -1;
               const dsf = cv.height / cv.clientHeight;
               const lw = cv.width / 4;
               const cx = h.lane * lw + lw / 2;
               const hyDev = cv.height * 0.82;
-              const yLimit = hyDev - 20 * dsf;
+              const yStart = Math.floor(hyDev - 20 * dsf);
+              const x0 = Math.max(0, Math.floor(cx - lw * 0.12));
+              const x1 = Math.min(cv.width - 1, Math.ceil(cx + lw * 0.12));
+              const w = Math.max(1, x1 - x0);
+              const img = cg.getImageData(x0, 0, w, cv.height).data;
+              const matches = (col: number, y: number): boolean => {
+                const i = (y * w + col) * 4;
+                return (
+                  Math.abs(img[i] - rgb[0]) < 70 &&
+                  Math.abs(img[i + 1] - rgb[1]) < 70 &&
+                  Math.abs(img[i + 2] - rgb[2]) < 70
+                );
+              };
               let best = -1;
               for (const x of [cx - lw * 0.12, cx, cx + lw * 0.12]) {
-                const img = cg.getImageData(Math.floor(x), 0, 1, cv.height).data;
-                for (let y = 0; y < yLimit; y++) {
-                  const r = img[y * 4];
-                  const g = img[y * 4 + 1];
-                  const b = img[y * 4 + 2];
-                  if (Math.abs(r - rgb[0]) < 70 && Math.abs(g - rgb[1]) < 70 && Math.abs(b - rgb[2]) < 70) {
-                    const gap = (hyDev - y) / dsf;
-                    if (best < 0 || gap < best) best = gap;
-                    break;
-                  }
+                const col = Math.min(w - 1, Math.max(0, Math.round(x - x0)));
+                // ライン直上から上へ連続する間をたどる。短い混色（ヒット演出など）を
+                // 拾わないよう、連続が 30 device px 以上続いた列だけを数える
+                let y = yStart;
+                let run = 0;
+                while (y >= 0 && matches(col, y)) {
+                  run++;
+                  y--;
+                }
+                if (run >= 30) {
+                  const gap = (hyDev - (y + 1)) / dsf;
+                  if (best < 0 || gap < best) best = gap;
                 }
               }
               return best;
             };
-            let frame = 0;
-            const tick = () => {
-              const songMs = performance.now() - t0 - 2000;
+            // 測定は rAF ではなく 40ms 間隔で回す（rAF は負荷時に間隔が大きく開き、
+            // 毎フレームの読み取りが描画をさらに圧迫して接近を捉え損ねたため）
+            const timer = window.setInterval(() => {
+              const songMs = gameMs();
               const completed = document.body.dataset.holdsCompleted === '1';
-              // 読み取りは1フレームおき（負荷を抑える）
-              if (!completed && songMs >= 4800 && frame++ % 2 === 0) {
-                const gap = topGapCss();
+              // 読み取りは尾の接近区間だけ（尾の 1800ms 前から）
+              if (!completed && songMs >= h.tail - 1800) {
+                const gap = bandGapCss();
                 if (gap >= 0 && (done.minGap < 0 || gap < done.minGap)) done.minGap = gap;
               }
               if (completed || songMs > h.tail + 1500) {
+                window.clearInterval(timer);
                 resolve(done);
-                return;
               }
-              requestAnimationFrame(tick);
-            };
-            requestAnimationFrame(tick);
+            }, 40);
           });
           obs.observe(document.body, { attributes: true, attributeFilter: ['data-game'] });
         });
