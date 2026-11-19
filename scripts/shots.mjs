@@ -107,6 +107,28 @@ const SCREENS = [
       await page.waitForTimeout(7300);
     },
   },
+  {
+    // night の演奏画面: 背景ジャケット（タイトルが左下）の切り抜き確認用
+    name: 'game-night',
+    open: async (page) => {
+      await page.click('.carousel-dot[data-song="night"]');
+      await page.waitForFunction("document.body.dataset.song === 'night'");
+      await page.click('#start-button');
+      await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
+      await page.waitForTimeout(7300);
+    },
+  },
+  {
+    // kira の演奏画面: 背景ジャケット（中央寄せ）の切り抜き確認用
+    name: 'game-kira',
+    open: async (page) => {
+      await page.click('.carousel-dot[data-song="kira"]');
+      await page.waitForFunction("document.body.dataset.song === 'kira'");
+      await page.click('#start-button');
+      await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
+      await page.waitForTimeout(7300);
+    },
+  },
 ];
 
 /** 撮る大きさ。dark はダークモード（端末設定に従う配色のアプリで確認する）。 */

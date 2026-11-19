@@ -48,7 +48,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,jpg,webp,woff2,mp3,m4a,webmanifest}'], // フォント・音・画像のファイルも、オフライン用に持つ
+        globPatterns: ['**/*.{js,css,html,svg,png,jpg,webp,woff2,mp3,m4a,wav,webmanifest}'], // フォント・音・画像のファイルも、オフライン用に持つ
         navigateFallback: 'index.html',
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // 曲の音源（mp3、約4.3MB）を precache に入れるため
       },

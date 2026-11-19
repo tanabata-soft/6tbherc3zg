@@ -1,27 +1,35 @@
-// 効果音は Web Audio で合成するのが基本（音声ファイルは持たない）。オン/オフ設定は必ず用意する。
-// 例外はフルコンボ演出のボイスだけ（v1.9.4。音声ファイル1本を src/assets に同梱する。下記）。
-// ヒット音は、曲の再生と同じ AudioContext（src/audio.ts）を使い、その場で合成する。
+// 効果音は Web Audio で合成するのが基本。オン/オフ設定は必ず用意する。
+// 音声ファイルの例外は2本だけ: ヒット音のクラップ（v1.9.5）と
+// フルコンボ演出のボイス（v1.9.4）。どちらも src/assets に同梱する。
+// 音は、曲の再生と同じ AudioContext（src/audio.ts）を使う。
 //
-// ヒット音は v1.8.0 でオーナー決定の「F案（8bit系）」に差し替えた。
-// v1.8.5 でタンバリン音（E案）に差し替えたが、オーナー指示で v1.9.1 に F案へ戻した
-// （タンバリンの合成コードは残していない。長押しの連打・完走音はもともと F案の家族）:
-//   矩形波の2音「ピロッ」（1音目 1568Hz を約32ms → 2音目 2093Hz を約50ms、
-//   全体に速い減衰）。頭に小さなクリックを足して打撃感を出す。
-//   判定別: PERFECT は2音とも明るく長め、GREAT は少し短く、
-//   GOOD は1音目だけ・少し低く短く鈍く。
-// コンボの tier が上がるほど基準ピッチが +1 半音ずつ上がる（上限 +4 半音。logic.ts が正本）。
+// ヒット音は v1.9.5 で、オーナー支給のクラップ音に差し替えた（オーナー指示
+// 「タッチ音をこれベースにして」）。素材はキレのいい単発クラップ（モノラル
+// 44.1kHz、0.12秒、 src/assets/hit-clap.wav 。支給元の WAV とバイト単位で同一）。
+// MP3 化するとエンコーダ遅延でアタックがずれうるため、無遅延でデコードできる
+// WAV のまま取り込む（10.6KB と小さく、precache への影響は無視できる）。
+//   判定別: PERFECT は大きく・長く（素材そのまま）・明るく、GREAT はその中間、
+//   GOOD は小さく・短く・鈍く（ローパスを下げ、途中で切る）。
+//   コンボ tier の変化はピッチではなく明るさ（ローパス）で付ける:
+//   クラップは打撃音なので、ピッチを変えると別の音に聞こえてしまうため
+//   （矩形波ブリップだった F案とは事情が違う）。
+// ヒット音の変遷: v1.8.0 で「F案（8bit系）」に決定 → v1.8.5 でタンバリン（E案）
+// → v1.9.1 で F案へ復帰 → v1.9.5 でクラップに差し替え。F案・タンバリンの
+// 合成コードは残していない（経緯は docs/HANDOVER.md）。
 // ヒット音は専用バス（ゲイン→コンプレッサー）を通し、重なってもクリップしにくくする。
 //
 // 長押し中は v1.8.3 から「ヒット音の連打」: 頭のヒットと同時に、曲の16分音符の間隔で
-// F案ブリップを連続して鳴らす（v1.8.1 の持続オシレータ音はオーナー指示で廃止）。
-// ピッチはコンボ tier 連動に加えて、進行に合わせて少しずつ上がる（開始→尾で +2 半音）。
-// 周期的な揺れ（ビブラート等）は入れない。拍 tick の音は鳴らさない（tick スコアの計算は logic.ts）。
-// 完走時は完走音（F案＋1音）、猶予切れの失敗時は小さく下がる失敗音を鳴らす。
-// 空タップ（ノーツのないレーンを押したとき）も、ヒット音と聞き分けられる小さな音を鳴らす。
+// ヒット音を連続して鳴らす（v1.8.1 の持続オシレータ音はオーナー指示で廃止）。
+// クラップ連打は通常ヒットより小さく・短く、進行に合わせて明るさが少しずつ上がる
+// （F案時代のピッチ上昇 +2 半音の代わり）。周期的な揺れ（ビブラート等）は入れない。
+// 拍 tick の音は鳴らさない（tick スコアの計算は logic.ts）。
+// 完走音（F案の3音ブリップ）・失敗音・空タップ音は、クラップとは役割の違う
+// 小さな合成音として据え置く（ヒット音と聞き分けられるようにするため）。
 import { audioContext, audioOutput, loadBuffer } from './audio';
 import { load, save } from './storage';
 import { hitPitchMultiplier, type Judge } from './logic';
 import fullComboVoiceUrl from './assets/fullcombo-voice.mp3';
+import hitClapUrl from './assets/hit-clap.wav';
 
 export type HitJudge = Exclude<Judge, 'miss'>;
 
@@ -49,34 +57,51 @@ export interface BlipToneParams {
   clickSec: number;
 }
 
-/** 判定ごとのヒット音。PERFECT は最も明るく長く、GOOD は1音だけ低く短く */
-export const HIT_BLIP: Record<HitJudge, BlipToneParams> = {
-  perfect: { freq1: 1568, freq2: 2093, freq3: 0, dur1: 0.032, dur2: 0.05, dur3: 0, decaySec: 0.03, peak: 0.22, clickPeak: 0.1, clickSec: 0.006 },
-  great: { freq1: 1568, freq2: 2093, freq3: 0, dur1: 0.028, dur2: 0.04, dur3: 0, decaySec: 0.026, peak: 0.17, clickPeak: 0.08, clickSec: 0.006 },
-  good: { freq1: 1397, freq2: 0, freq3: 0, dur1: 0.026, dur2: 0, dur3: 0, decaySec: 0.018, peak: 0.12, clickPeak: 0.05, clickSec: 0.005 },
+/** クラップ素材の長さ（秒）。オーナー支給の単発クラップ（44.1kHz・モノラル） */
+export const CLAP_DURATION_SEC = 0.12;
+
+/** クラップ1発の鳴らし方（判定・tier・進行から決まる） */
+export interface ClapToneParams {
+  /** 音量（素材のピーク 0.9 に対する再生ゲイン） */
+  peak: number;
+  /** 鳴らす長さ（秒）。素材より短いときは、末尾に短いフェードを付けて切る */
+  durSec: number;
+  /** ローパスのカットオフ (Hz)。明るさの制御に使う（ピッチは変えない） */
+  lowpassHz: number;
+}
+
+/** 判定ごとのクラップの鳴らし方。PERFECT は最も大きく・長く・明るく、GOOD は小さく・短く・鈍く */
+export const CLAP_HIT: Record<HitJudge, ClapToneParams> = {
+  perfect: { peak: 0.5, durSec: CLAP_DURATION_SEC, lowpassHz: 9500 },
+  great: { peak: 0.42, durSec: 0.1, lowpassHz: 8000 },
+  good: { peak: 0.32, durSec: 0.075, lowpassHz: 5200 },
 };
 
+/** コンボ tier で明るさ（ローパス）が上がる付け方。ピッチは変えない */
+export const CLAP_TIER_BRIGHTNESS = {
+  /** 1 tier ごとのローパスの上昇率 */
+  perTier: 0.15,
+  /** 上限の tier（logic.ts の最高 tier と同じ 4） */
+  maxTier: 4,
+} as const;
+
+/** tier 分の明るさ倍率（tier 0 で 1、上限 tier で 1 + perTier × maxTier） */
+function tierBrightness(tier: number): number {
+  const t = Math.min(CLAP_TIER_BRIGHTNESS.maxTier, Math.max(0, Math.floor(tier)));
+  return 1 + CLAP_TIER_BRIGHTNESS.perTier * t;
+}
+
 /**
- * 長押し中の連打の1発の音。F案ヒット音の家族で、通常ヒット音より少し小さく・短い。
+ * 長押し中の連打の1発のクラップ。通常ヒットより小さく・短い。
  * v1.8.1 の持続音（HOLD_TONE）は、オーナー指示「連続音は今のヒット音を連続で鳴らして」で廃止した。
  */
-export const HOLD_BLIP: BlipToneParams = {
-  freq1: 1568,
-  freq2: 2093,
-  freq3: 0,
-  dur1: 0.024,
-  dur2: 0.034,
-  dur3: 0,
-  decaySec: 0.018,
-  peak: 0.11,
-  clickPeak: 0.05,
-  clickSec: 0.005,
-};
+export const CLAP_HOLD: ClapToneParams = { peak: 0.24, durSec: 0.06, lowpassHz: 7500 };
+
+/** 連打の明るさが、ホールドの進行（頭→尾）で上がる倍率。F案時代のピッチ上昇（+2 半音）の代わり */
+export const HOLD_CLAP_RISE = 1.5;
 
 /** 長押し中の連打の進め方 */
 export const HOLD_STREAM = {
-  /** ホールドの進行（頭→尾）でピッチが上がる量（半音）。v1.8.1 の持続音と同じ気持ちよさを残す */
-  riseSemitones: 2,
   /** 同時に鳴らす連打の上限（超えたら古いものから止める） */
   maxVoices: 4,
   /** 先行スケジュールの幅（秒）。AudioContext 時刻で予約するので、フレーム落ちで間隔が潰れない */
@@ -97,7 +122,7 @@ export function holdStreamIntervalSec(bpm: number): number {
 
 /**
  * 空タップ音。ノーツのないレーンを押したときに鳴らし、「タッチすれば何か鳴る」状態にする。
- * ヒット音と聞き分けられるよう、F案の家族で1音だけ・低め（1046Hz）・短い・小さめにする。
+ * ヒット音（クラップ）と聞き分けられるよう、合成ブリップで1音だけ・低め（1046Hz）・短い・小さめにする。
  */
 export const EMPTY_BLIP: BlipToneParams = {
   freq1: 1046,
@@ -113,7 +138,8 @@ export const EMPTY_BLIP: BlipToneParams = {
 };
 
 /**
- * 長押しの完走音。F案の2音ブリップにもう1音（1オクターブ上）を足した3音。
+ * 長押しの完走音。旧ヒット音（F案）の2音ブリップにもう1音（1オクターブ上）を足した3音。
+ * ヒット音がクラップに変わったあとも、達成感を出す締めの音として据え置く。
  * 頭の判定で音色を変え、ピークは通常ヒット音以下に抑える（他のヒット音と重なっても破綻しない）。
  * GOOD は2音目がない代わりに、1音目→オクターブ上の2音にする。
  */
@@ -137,11 +163,13 @@ export const FAIL_BLIP: BlipToneParams = {
   clickSec: 0,
 };
 
-/** 判定と tier から、実際に鳴らすパラメータと各音の周波数を決める */
-export function hitToneFor(judge: HitJudge, tier: number): { tone: BlipToneParams; freq1: number; freq2: number } {
-  const tone = HIT_BLIP[judge];
-  const mul = hitPitchMultiplier(tier);
-  return { tone, freq1: tone.freq1 * mul, freq2: tone.freq2 * mul };
+/**
+ * 判定と tier から、クラップの鳴らし方を決める。
+ * tier の変化はピッチではなく明るさ（ローパス）で付ける（音量と長さは判定だけで決まる）。
+ */
+export function clapToneFor(judge: HitJudge, tier: number): ClapToneParams {
+  const base = CLAP_HIT[judge];
+  return { peak: base.peak, durSec: base.durSec, lowpassHz: base.lowpassHz * tierBrightness(tier) };
 }
 
 /** 完走音のパラメータと各音の周波数（ピッチはヒット音と同じ規則で tier 連動） */
@@ -155,14 +183,15 @@ export function completeToneFor(
 }
 
 /**
- * 連打の1発のピッチ。tier 連動（ヒット音と同じ規則）に加えて、
- * ホールドの進行（progress: 0=頭、1=尾）で +riseSemitones 半音まで上がる。
+ * 連打の1発の鳴らし方。tier で明るくなる（ヒット音と同じ規則）に加えて、
+ * ホールドの進行（progress: 0=頭、1=尾）で明るさが HOLD_CLAP_RISE 倍まで上がる
+ * （F案時代のピッチ上昇の代わり。ピッチは変えない）。
  * 押し直しで再開するときは、経過分の progress から始めるので上がり具合を引き継げる。
  */
-export function holdBlipFor(tier: number, progress: number): { tone: BlipToneParams; freq1: number; freq2: number } {
+export function holdClapFor(tier: number, progress: number): ClapToneParams {
   const p = Math.min(1, Math.max(0, progress));
-  const mul = hitPitchMultiplier(tier) * Math.pow(2, (HOLD_STREAM.riseSemitones * p) / 12);
-  return { tone: HOLD_BLIP, freq1: HOLD_BLIP.freq1 * mul, freq2: HOLD_BLIP.freq2 * mul };
+  const bright = tierBrightness(tier) * (1 + (HOLD_CLAP_RISE - 1) * p);
+  return { peak: CLAP_HOLD.peak, durSec: CLAP_HOLD.durSec, lowpassHz: CLAP_HOLD.lowpassHz * bright };
 }
 
 let enabled = load('sound', true);
@@ -253,17 +282,67 @@ function playBlipAt(tone: BlipToneParams, freq1: number, freq2: number, freq3: n
   }
 }
 
-/** ノーツに当たった瞬間のヒット音。tier が高いほどピッチが上がる */
+// ---- クラップ素材（音声ファイル）の読み込みと再生 ----
+// 読み込んだバッファは保持する（loadBuffer が URL 単位で保持するが、
+// 連打の先行スケジュールでは同期待ちなしに使いたいので、解決済みの参照も持つ）。
+let clapBuf: AudioBuffer | undefined;
+let clapLoading: Promise<AudioBuffer> | undefined;
+
+function loadClap(): Promise<AudioBuffer> {
+  if (!clapLoading) {
+    clapLoading = loadBuffer(hitClapUrl).then((buf) => {
+      clapBuf = buf;
+      return buf;
+    });
+  }
+  return clapLoading;
+}
+
+/** 演奏開始のときにクラップ素材を先読みしておく（最初のヒットや連打で読み込み待ちにならないように） */
+export function preloadHitClap(): void {
+  void loadClap().catch(() => undefined);
+}
+
+/**
+ * クラップを1発、指定した AudioContext 時刻・出口で鳴らす。
+ * ローパス（明るさ）→ ゲイン（音量）の順につなぐ。素材より短く切り取るときは、
+ * 末尾 8ms のフェードで落としてクリック音を防ぐ。
+ * バッファがまだ読み込めていない場合は、その1発だけ諦めて読み込みを始める
+ * （演奏開始時に先読みするので、通常は起きない）。
+ */
+function playClap(tone: ClapToneParams, when: number, out: AudioNode): void {
+  if (!clapBuf) {
+    void loadClap().catch(() => undefined);
+    return;
+  }
+  const ac = audioContext();
+  const src = ac.createBufferSource();
+  src.buffer = clapBuf;
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = tone.lowpassHz;
+  lp.Q.value = 0.7;
+  const gain = ac.createGain();
+  const dur = Math.min(tone.durSec, clapBuf.duration);
+  gain.gain.setValueAtTime(tone.peak, when);
+  if (dur < clapBuf.duration - 0.004) {
+    gain.gain.setValueAtTime(tone.peak, when + Math.max(0, dur - 0.008));
+    gain.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  }
+  src.connect(lp).connect(gain).connect(out);
+  src.start(when, 0, dur + 0.02);
+}
+
+/** ノーツに当たった瞬間のヒット音（クラップ）。tier が高いほど明るくなる */
 export function playHitSound(judge: HitJudge, tier = 0): void {
   if (!enabled) return;
   try {
     const ac = audioContext();
     // iPhone では操作のあとに resume が必要
     void ac.resume();
-    const { tone, freq1, freq2 } = hitToneFor(judge, tier);
-    playBlip(tone, freq1, freq2);
+    playClap(clapToneFor(judge, tier), ac.currentTime, hitBus());
     // テストが「どの音が鳴ったか」を確認できるようにイベントを出す
-    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hit', judge, tier, frequency: freq1 } }));
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hit', judge, tier } }));
   } catch {
     // 音が出せなくても続行する
   }
@@ -391,7 +470,7 @@ interface HoldStreamVoice {
   progress0: number;
   /** 開始から尾までの残り時間（秒）。進行の計算に使う */
   durationSec: number;
-  /** 開始時点のコンボ tier（ピッチに使う） */
+  /** 開始時点のコンボ tier（明るさに使う） */
   tier: number;
   /** 連打の間隔（秒） */
   intervalSec: number;
@@ -439,9 +518,8 @@ export function startHoldSound(key: object, tier: number, durationMs: number, pr
         while (voice.nextAt < voice.endAt && voice.nextAt < ahead) {
           const elapsed = voice.nextAt - voice.startAt;
           const prog = voice.progress0 + (1 - voice.progress0) * Math.min(1, elapsed / voice.durationSec);
-          const { tone, freq1, freq2 } = holdBlipFor(voice.tier, prog);
-          playBlipAt(tone, freq1, freq2, 0, voice.nextAt, voice.out);
-          document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-hit', tier: voice.tier, frequency: freq1 } }));
+          playClap(holdClapFor(voice.tier, prog), voice.nextAt, voice.out);
+          document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-hit', tier: voice.tier } }));
           voice.nextAt += voice.intervalSec;
         }
         // 安全弁: 通常は尾の時刻に stopHoldSound で止めるが、止め忘れても鳴りっぱなしにしない
@@ -453,8 +531,7 @@ export function startHoldSound(key: object, tier: number, durationMs: number, pr
     voice.timer = setInterval(schedule, HOLD_STREAM.timerMs);
     holdVoices.set(key, voice);
     schedule(); // 最初の1発は即座に予約する
-    const first = holdBlipFor(tier, voice.progress0);
-    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-start', tier, frequency: first.freq1 } }));
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hold-start', tier } }));
   } catch {
     // 音が出せなくても続行する
   }

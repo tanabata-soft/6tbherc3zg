@@ -37,16 +37,15 @@ describe('効果音の設定（sound）', () => {
     expect(reloaded.isSoundOn()).toBe(false);
   });
 
-  it('判定ごとの音は PERFECT がいちばん長く、音量も大きい（GOOD は低く短い）', async () => {
-    const { HIT_BLIP } = await import('../src/sound');
-    const total = (j: 'perfect' | 'great' | 'good') => HIT_BLIP[j].dur1 + HIT_BLIP[j].dur2;
-    expect(total('perfect')).toBeGreaterThan(total('great'));
-    expect(total('great')).toBeGreaterThan(total('good'));
-    expect(HIT_BLIP.good.freq1).toBeLessThan(HIT_BLIP.perfect.freq1);
-    expect(HIT_BLIP.perfect.peak).toBeGreaterThan(HIT_BLIP.great.peak);
-    expect(HIT_BLIP.great.peak).toBeGreaterThan(HIT_BLIP.good.peak);
-    // 曲を邪魔しない控えめな音量
-    expect(HIT_BLIP.perfect.peak).toBeLessThanOrEqual(0.25);
+  it('判定ごとの音は PERFECT がいちばん長く、音量も大きい（GOOD は鈍く短い）', async () => {
+    const { CLAP_HIT } = await import('../src/sound');
+    expect(CLAP_HIT.perfect.durSec).toBeGreaterThan(CLAP_HIT.great.durSec);
+    expect(CLAP_HIT.great.durSec).toBeGreaterThan(CLAP_HIT.good.durSec);
+    expect(CLAP_HIT.good.lowpassHz).toBeLessThan(CLAP_HIT.perfect.lowpassHz);
+    expect(CLAP_HIT.perfect.peak).toBeGreaterThan(CLAP_HIT.great.peak);
+    expect(CLAP_HIT.great.peak).toBeGreaterThan(CLAP_HIT.good.peak);
+    // 曲を邪魔しない控えめな音量（素材のピーク 0.9 に対する再生ゲイン）
+    expect(CLAP_HIT.perfect.peak).toBeLessThanOrEqual(0.6);
   });
 
   it('オフのときは音を出そうとしない（例外にもならない）', async () => {

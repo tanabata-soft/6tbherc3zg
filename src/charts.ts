@@ -12,6 +12,23 @@ import nightJacket from './assets/night.jpg';
 import gospelJacket from './assets/gospel.jpg';
 import kiraJacket from './assets/kira.jpg';
 
+/**
+ * 演奏画面の背景ジャケットの切り抜き方（ジャケット内座標への割合 0..1 で指定する）。
+ * 曲選択カルーセルの寄せ方向（style.css の object-position）と同じ知見で決める。
+ */
+export interface JacketCrop {
+  /** 横の寄せ: 0=左端、0.5=中央、1=右端 */
+  x: number;
+  /** 縦の寄せ: 0=上端、0.5=中央、1=下端 */
+  y: number;
+  /**
+   * 絵の中のタイトルが収まる窓の幅（ジャケット幅への割合）。
+   * 指定した曲は、その窓を画面の横幅いっぱいに敷く層を重ねて、タイトルが切れないようにする
+   * （縦長の画面では cover 切り抜きの窓がタイトルより狭く、右端が切れてしまうため）
+   */
+  titleWidth?: number;
+}
+
 export interface SongEntry {
   id: SongId;
   data: SongData;
@@ -19,6 +36,8 @@ export interface SongEntry {
   audioUrl: string;
   /** ジャケット絵の URL */
   jacketUrl: string;
+  /** 演奏画面の背景ジャケットの切り抜き方 */
+  bgCrop: JacketCrop;
   /** 収録アルバム名（表示用） */
   album: string;
   genre: string;
@@ -36,6 +55,8 @@ export const SONGS: SongEntry[] = [
     lyrics: lyrics.highway,
     audioUrl: highwayAudio,
     jacketUrl: highwayJacket,
+    // タイトル（「石畳のハイウェイ」＋英題）は左上の横 0.02〜0.64、上端寄せで全部収まる
+    bgCrop: { x: 0, y: 0, titleWidth: 0.68 },
     album: '銀の谷間のダンスフロア',
     genre: '90s J-Pop / Eurobeat',
   },
@@ -45,6 +66,8 @@ export const SONGS: SongEntry[] = [
     lyrics: lyrics.night,
     audioUrl: nightAudio,
     jacketUrl: nightJacket,
+    // タイトル（KISO NIGHT SILHOUETTE）は左下の横 0.02〜0.72、下端寄せで全部収まる
+    bgCrop: { x: 0, y: 1, titleWidth: 0.76 },
     album: 'Silver Screen Ascent',
     genre: '90s J-Pop / Eurobeat',
   },
@@ -55,6 +78,8 @@ export const SONGS: SongEntry[] = [
     lyrics: lyrics.gospel,
     audioUrl: gospelAudio,
     jacketUrl: gospelJacket,
+    // 文字なしの絵。主役（渓谷で両手を広げる男性、横 0.13〜0.68）に窓の中心を合わせる
+    bgCrop: { x: 0.35, y: 0.5 },
     album: '谷底のハレルヤ',
     genre: 'Gospel',
   },
@@ -64,6 +89,8 @@ export const SONGS: SongEntry[] = [
     lyrics: lyrics.kira,
     audioUrl: kiraAudio,
     jacketUrl: kiraJacket,
+    // 文字なしの絵。天の川と2人の人物が中央にあるので中央寄せ（カルーセルと同じ）
+    bgCrop: { x: 0.5, y: 0.5 },
     album: 'After the Last Bus',
     genre: 'Synth Pop',
   },

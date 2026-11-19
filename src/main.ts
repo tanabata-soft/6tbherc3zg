@@ -15,7 +15,7 @@ import { Game, type GameResult } from './game';
 import { exposeTestApi, setData, setupDebug } from './debug';
 import { setupInstallGuide } from './install';
 import { setupUpdateBanner } from './pwa';
-import { isSoundOn, playFullComboVoice, preloadFullComboVoice, setSound } from './sound';
+import { isSoundOn, playFullComboVoice, preloadFullComboVoice, preloadHitClap, setSound } from './sound';
 import cageGhostriderUrl from './assets/cage-ghostrider.webp';
 import { isVibrateOn, setVibrate } from './haptics';
 import { audioState, isUnlocked, unlockAudio } from './audio';
@@ -492,6 +492,8 @@ async function startGame(): Promise<void> {
   unlockAudio();
   // フルコンボ演出のボイスを先読みしておく（演奏の締めで読み込み待ちにならないように）
   preloadFullComboVoice();
+  // ヒット音のクラップ素材も先読みしておく（最初のヒットで読み込み待ちにならないように）
+  preloadHitClap();
   const entry = songById(selectedSong);
   lastEntry = entry;
   lastDiff = selectedDiff;
