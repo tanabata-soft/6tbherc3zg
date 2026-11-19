@@ -1,10 +1,11 @@
 // 効果音は Web Audio で合成する（音声ファイルは持たない）。オン/オフ設定は必ず用意する。
 // ヒット音は、曲の再生と同じ AudioContext（src/audio.ts）を使い、その場で合成する。
 //
-// ヒット音の構造（v1.7.0 で作り替え）:
-//   アタック … 10〜20ms の短いノイズ（ハイパス）で「パチッ」という打撃感
-//   本体     … 三角波が鳴り始めから短時間でピッチダウンし、約90ms で減衰する（木琴・打鍵の感じ）
-//   きらめき … PERFECT は 2 倍音を少し足す。GREAT は控えめ、GOOD はなし
+// ヒット音は v1.8.0 でオーナー決定の「F案（8bit系）」に差し替えた:
+//   矩形波の2音「ピロッ」（1音目 1568Hz を約32ms → 2音目 2093Hz を約50ms、
+//   全体に速い減衰）。頭に小さなクリックを足して打撃感を出す。
+//   判定別: PERFECT は2音とも明るく長め、GREAT は少し短く、
+//   GOOD は1音目だけ・少し低く短く鈍く。
 // コンボの tier が上がるほど基準ピッチが +1 半音ずつ上がる（上限 +4 半音。logic.ts が正本）。
 // ヒット音は専用バス（ゲイン→コンプレッサー）を通し、重なってもクリップしにくくする。
 import { audioContext, audioOutput } from './audio';
@@ -13,54 +14,55 @@ import { hitPitchMultiplier, type Judge } from './logic';
 
 export type HitJudge = Exclude<Judge, 'miss'>;
 
-/** ヒット音1音分のパラメータ */
-export interface HitToneParams {
-  /** 本体の鳴り始めの周波数 (Hz)。tier のピッチ補正はここにかかる */
-  baseFreq: number;
-  /** ピッチダウンの終端（開始周波数に対する比率） */
-  endRatio: number;
-  /** ピッチが落ちきるまでの時間 (秒) */
-  dropSec: number;
-  /** 全体の減衰時間 (秒) */
+/** 8bit系ブリップ1音分のパラメータ */
+export interface BlipToneParams {
+  /** 1音目の周波数 (Hz)。tier のピッチ補正はここにかかる */
+  freq1: number;
+  /** 2音目の周波数 (Hz)。0 なら2音目は鳴らさない */
+  freq2: number;
+  /** 1音目の長さ (秒) */
+  dur1: number;
+  /** 2音目の長さ (秒) */
+  dur2: number;
+  /** 減衰の余分 (秒)。全体の長さに足して指数減衰させる */
   decaySec: number;
-  /** 本体の音量（曲を邪魔しない控えめな値） */
+  /** 音量（曲を邪魔しない控えめな値） */
   peak: number;
-  /** アタックノイズの音量 */
-  noisePeak: number;
-  /** アタックノイズの長さ (秒) */
-  noiseSec: number;
-  /** 倍音（2倍音）の音量比。0 でなし */
-  sparkle: number;
+  /** 頭のクリックの音量。0 でなし */
+  clickPeak: number;
+  /** クリックの長さ (秒) */
+  clickSec: number;
 }
 
-/** 判定ごとのヒット音。PERFECT は最も明るく高く、GOOD は鈍く短く */
-export const HIT_TONE: Record<HitJudge, HitToneParams> = {
-  perfect: { baseFreq: 1250, endRatio: 0.56, dropSec: 0.06, decaySec: 0.09, peak: 0.2, noisePeak: 0.17, noiseSec: 0.016, sparkle: 0.35 },
-  great: { baseFreq: 1000, endRatio: 0.58, dropSec: 0.055, decaySec: 0.08, peak: 0.15, noisePeak: 0.13, noiseSec: 0.014, sparkle: 0.15 },
-  good: { baseFreq: 750, endRatio: 0.6, dropSec: 0.045, decaySec: 0.06, peak: 0.11, noisePeak: 0.09, noiseSec: 0.012, sparkle: 0 },
+/** 判定ごとのヒット音。PERFECT は最も明るく長く、GOOD は1音だけ低く短く */
+export const HIT_BLIP: Record<HitJudge, BlipToneParams> = {
+  perfect: { freq1: 1568, freq2: 2093, dur1: 0.032, dur2: 0.05, decaySec: 0.03, peak: 0.22, clickPeak: 0.1, clickSec: 0.006 },
+  great: { freq1: 1568, freq2: 2093, dur1: 0.028, dur2: 0.04, decaySec: 0.026, peak: 0.17, clickPeak: 0.08, clickSec: 0.006 },
+  good: { freq1: 1397, freq2: 0, dur1: 0.026, dur2: 0, decaySec: 0.018, peak: 0.12, clickPeak: 0.05, clickSec: 0.005 },
 };
 
-/** 長押しの tick 音。本体より柔らかく短い、同じ仕組みの軽量版 */
-export const TICK_TONE: HitToneParams = {
-  baseFreq: 1150,
-  endRatio: 0.72,
-  dropSec: 0.03,
-  decaySec: 0.045,
+/** 長押しの tick 音。F案の軽量版（1音だけの短い矩形波、クリックなし） */
+export const TICK_BLIP: BlipToneParams = {
+  freq1: 1568,
+  freq2: 0,
+  dur1: 0.03,
+  dur2: 0,
+  decaySec: 0.016,
   peak: 0.05,
-  noisePeak: 0.02,
-  noiseSec: 0.008,
-  sparkle: 0,
+  clickPeak: 0,
+  clickSec: 0,
 };
 
-/** 判定と tier から、実際に鳴らすパラメータと開始周波数を決める */
-export function hitToneFor(judge: HitJudge, tier: number): { tone: HitToneParams; freq: number } {
-  const tone = HIT_TONE[judge];
-  return { tone, freq: tone.baseFreq * hitPitchMultiplier(tier) };
+/** 判定と tier から、実際に鳴らすパラメータと各音の周波数を決める */
+export function hitToneFor(judge: HitJudge, tier: number): { tone: BlipToneParams; freq1: number; freq2: number } {
+  const tone = HIT_BLIP[judge];
+  const mul = hitPitchMultiplier(tier);
+  return { tone, freq1: tone.freq1 * mul, freq2: tone.freq2 * mul };
 }
 
-/** tick 音のパラメータと開始周波数（ピッチはヒット音と同じ規則で tier 連動） */
-export function tickToneFor(tier: number): { tone: HitToneParams; freq: number } {
-  return { tone: TICK_TONE, freq: TICK_TONE.baseFreq * hitPitchMultiplier(tier) };
+/** tick 音のパラメータと周波数（ピッチはヒット音と同じ規則で tier 連動） */
+export function tickToneFor(tier: number): { tone: BlipToneParams; freq: number } {
+  return { tone: TICK_BLIP, freq: TICK_BLIP.freq1 * hitPitchMultiplier(tier) };
 }
 
 let enabled = load('sound', true);
@@ -93,7 +95,7 @@ function hitBus(): AudioNode {
   return bus;
 }
 
-// アタック用の短いノイズは使い回す（ヒットのたびに作り直さない）。減衰はゲイン側で付ける
+// 頭のクリック用の短いノイズは使い回す（ヒットのたびに作り直さない）。減衰はゲイン側で付ける
 let noiseBuffer: AudioBuffer | undefined;
 
 function getNoiseBuffer(ac: AudioContext): AudioBuffer {
@@ -105,51 +107,38 @@ function getNoiseBuffer(ac: AudioContext): AudioBuffer {
   return noiseBuffer;
 }
 
-/** 1音を合成して鳴らす（本体＋倍音＋アタックノイズ） */
-function playTone(tone: HitToneParams, freq: number): void {
+/** ブリップを1つ合成して鳴らす（矩形波の1〜2音＋頭のクリック） */
+function playBlip(tone: BlipToneParams, freq1: number, freq2: number): void {
   const ac = audioContext();
   const t = ac.currentTime;
   const out = hitBus();
+  const total = tone.dur1 + (freq2 > 0 ? tone.dur2 : 0);
 
-  // 本体: 三角波が素早くピッチダウンしながら減衰する
   const osc = ac.createOscillator();
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(freq, t);
-  osc.frequency.exponentialRampToValueAtTime(freq * tone.endRatio, t + tone.dropSec);
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(freq1, t);
+  if (freq2 > 0) osc.frequency.setValueAtTime(freq2, t + tone.dur1);
   const oscGain = ac.createGain();
   oscGain.gain.setValueAtTime(tone.peak, t);
-  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + tone.decaySec);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + total + tone.decaySec);
   osc.connect(oscGain).connect(out);
   osc.start(t);
-  osc.stop(t + tone.decaySec + 0.02);
+  osc.stop(t + total + tone.decaySec + 0.02);
 
-  // きらめき: 2倍音を薄く重ねる（PERFECT のみ実質的に聞こえる量）
-  if (tone.sparkle > 0) {
-    const sub = ac.createOscillator();
-    sub.type = 'sine';
-    sub.frequency.setValueAtTime(freq * 2, t);
-    sub.frequency.exponentialRampToValueAtTime(freq * 2 * tone.endRatio, t + tone.dropSec);
-    const subGain = ac.createGain();
-    const subDecay = tone.decaySec * 0.55;
-    subGain.gain.setValueAtTime(tone.peak * tone.sparkle, t);
-    subGain.gain.exponentialRampToValueAtTime(0.0001, t + subDecay);
-    sub.connect(subGain).connect(out);
-    sub.start(t);
-    sub.stop(t + subDecay + 0.02);
+  // 頭のクリック: ハイパスした短いノイズで打撃感を出す
+  if (tone.clickPeak > 0) {
+    const noise = ac.createBufferSource();
+    noise.buffer = getNoiseBuffer(ac);
+    const high = ac.createBiquadFilter();
+    high.type = 'highpass';
+    high.frequency.value = 3200;
+    const noiseGain = ac.createGain();
+    noiseGain.gain.setValueAtTime(tone.clickPeak, t);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + tone.clickSec);
+    noise.connect(high).connect(noiseGain).connect(out);
+    noise.start(t);
+    noise.stop(t + tone.clickSec + 0.02);
   }
-
-  // アタック: ハイパスした短いノイズで打撃感を出す
-  const noise = ac.createBufferSource();
-  noise.buffer = getNoiseBuffer(ac);
-  const high = ac.createBiquadFilter();
-  high.type = 'highpass';
-  high.frequency.value = 3200;
-  const noiseGain = ac.createGain();
-  noiseGain.gain.setValueAtTime(tone.noisePeak, t);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + tone.noiseSec);
-  noise.connect(high).connect(noiseGain).connect(out);
-  noise.start(t);
-  noise.stop(t + tone.noiseSec + 0.02);
 }
 
 /** ノーツに当たった瞬間のヒット音。tier が高いほどピッチが上がる */
@@ -159,21 +148,21 @@ export function playHitSound(judge: HitJudge, tier = 0): void {
     const ac = audioContext();
     // iPhone では操作のあとに resume が必要
     void ac.resume();
-    const { tone, freq } = hitToneFor(judge, tier);
-    playTone(tone, freq);
+    const { tone, freq1, freq2 } = hitToneFor(judge, tier);
+    playBlip(tone, freq1, freq2);
     // テストが「どの音が鳴ったか」を確認できるようにイベントを出す
-    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hit', judge, tier, frequency: freq } }));
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hit', judge, tier, frequency: freq1 } }));
   } catch {
     // 音が出せなくても続行する
   }
 }
 
-/** 長押しの tick 音（拍ごと）。ヒット音より柔らかく短い */
+/** 長押しの tick 音（拍ごと）。ヒット音よりずっと小さく短い */
 export function playTickSound(tier = 0): void {
   if (!enabled) return;
   try {
     const { tone, freq } = tickToneFor(tier);
-    playTone(tone, freq);
+    playBlip(tone, freq, 0);
     document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'tick', tier, frequency: freq } }));
   } catch {
     // 音が出せなくても続行する

@@ -266,9 +266,21 @@ export function effectiveTier(combo: number, fever: boolean): number {
   return Math.min(MAX_COMBO_TIER, comboTier(combo) + (fever ? 1 : 0));
 }
 
-/** 節目表示を出すコンボ数か（50 ごと） */
-export function isComboMilestone(combo: number): boolean {
-  return combo > 0 && combo % 50 === 0;
+/** ケージ風キャラが登場するコンボの間隔 */
+export const CAGE_COMBO_INTERVAL = 30;
+
+/**
+ * コンボ数がケージ登場のタイミングか（30 ごと＋100 の倍数）。
+ * 100 は 30 の倍数ではないので、倍数側も登場タイミングに含める
+ * （100、200 では isCageBigCombo の一段大きい登場になる）。
+ */
+export function isCageCombo(combo: number): boolean {
+  return combo > 0 && (combo % CAGE_COMBO_INTERVAL === 0 || combo % 100 === 0);
+}
+
+/** 100 の倍数（ケージが一段大きく登場する）か */
+export function isCageBigCombo(combo: number): boolean {
+  return combo > 0 && combo % 100 === 0;
 }
 
 /** tier ごとの演出パラメータ。値が大きいほど派手 */
@@ -331,6 +343,34 @@ export function hitPitchSemitones(tier: number): number {
 /** ヒット音のピッチ倍率 */
 export function hitPitchMultiplier(tier: number): number {
   return Math.pow(2, hitPitchSemitones(tier) / 12);
+}
+
+/** 歌詞1行（src/data/lyrics.json の形）。時刻は曲頭からの ms */
+export interface LyricLine {
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
+/**
+ * 時刻に対応する歌詞行のインデックスを返す。どの行の範囲にもない
+ * （イントロ・間奏・曲の終わりのあと）なら -1。行は startMs 昇順の前提。
+ */
+export function lyricIndexAt(lines: readonly LyricLine[], atMs: number): number {
+  let lo = 0;
+  let hi = lines.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lines[mid].startMs <= atMs) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (found < 0) return -1;
+  return atMs < lines[found].endMs ? found : -1;
 }
 
 /** 譜面データの検証。問題があれば文言の配列を返す（生成スクリプトと同じ規則） */

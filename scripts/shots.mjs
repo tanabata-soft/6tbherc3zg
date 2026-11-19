@@ -30,7 +30,7 @@ const SCREENS = [
   },
   {
     // コンボ連動エフェクトの確認用: テスト用の入口（?debug=1）でコンボを 100 にして、
-    // 最高 tier のコンボ表示と節目表示（100 COMBO）を撮る
+    // 最高 tier のコンボ表示とケージ登場（100 の倍数＝一段大きい登場）を撮る
     name: 'game-combo',
     open: async (page) => {
       await page.goto(url + '?debug=1');
@@ -38,7 +38,7 @@ const SCREENS = [
       await page.click('#start-button');
       await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
       await page.evaluate(() => globalThis.__pwaTest.setCombo(100));
-      // 節目表示（0.9秒）が出ているうちに撮る
+      // ケージのポップ（約1.25秒）が出ているうちに撮る
       await page.waitForTimeout(250);
     },
   },

@@ -14,8 +14,10 @@ import {
   effectiveTier,
   emptyCounts,
   findHit,
-  isComboMilestone,
+  isCageBigCombo,
+  isCageCombo,
   isFever,
+  lyricIndexAt,
   makePlayNotes,
   rankFor,
   accuracy,
@@ -50,6 +52,10 @@ export interface GameCallbacks {
   onFinish(result: GameResult): void;
   /** 中断（左上タップ、または画面が隠れた）でメニューに戻るとき */
   onAbort(): void;
+  /** コンボが30の倍数に達した（ケージ風キャラの登場）。big は100の倍数 */
+  onCage(combo: number, big: boolean): void;
+  /** 歌詞の現在行が変わった（-1 は歌詞のない区間） */
+  onLyric(index: number): void;
 }
 
 const HIT_Y_RATIO = 0.82;
@@ -102,7 +108,8 @@ const RING_LIFE = 0.32;
 const POP_LIFE = 0.18;
 const RIPPLE_LIFE = 0.38;
 const JUDGE_LIFE = 0.55;
-const MILESTONE_LIFE = 0.9;
+/** ケージ登場時の紙吹雪の色 */
+const CONFETTI_COLORS = ['#ff6b6b', '#ffd166', '#4ecdc4', '#6c8cff', '#ff8ad8', '#ffffff'];
 /** 粒子の総数の上限（iPhone で 60fps を保つため。死んだ粒子はプールで再利用する） */
 const MAX_PARTICLES = 300;
 
@@ -134,8 +141,7 @@ export class Game {
   private judgeColor = '#fff';
   private judgeTier = 0; // 判定文字を出した時点のコンボ tier（大きさ・色に使う）
   private judgeShownAt = -Infinity; // AudioContext 時刻（秒）
-  private milestoneText = '';
-  private milestoneShownAt = -Infinity; // AudioContext 時刻（秒）
+  private lyricIndex = -2; // 現在の歌詞行（-2 は未送信。-1 は歌詞のない区間）
   private lastFrameAt = 0; // 前フレームの AudioContext 時刻（秒）。dt の計算用
   private width = 0;
   private height = 0;
@@ -274,8 +280,9 @@ export class Game {
     this.judgeText = '';
     this.judgeTier = 0;
     this.judgeShownAt = -Infinity;
-    this.milestoneText = '';
-    this.milestoneShownAt = -Infinity;
+    this.lyricIndex = -2;
+    setData('cage', 0);
+    setData('lyricIndex', -1);
     this.durationSec = buf.duration;
     this.bg = new Image();
     this.bg.src = entry.jacketUrl;
@@ -348,7 +355,7 @@ export class Game {
     playHitSound(hit.judge, tier);
     vibrateHit(hit.judge);
     this.syncCombo();
-    if (isComboMilestone(this.combo)) this.showMilestone(this.combo);
+    if (isCageCombo(this.combo)) this.triggerCage(this.combo);
     if (hit.note.holdMs > 0) {
       // 長押し: 集計（PERFECT等への加算）は押し切ったときに頭の判定で行う。コンボは頭で増やす
       beginHold(hit.note, hit.judge, 60000 / (this.entry?.data.bpm ?? 120));
@@ -376,11 +383,28 @@ export class Game {
     this.judgeShownAt = nowSeconds();
   }
 
-  /** コンボ数の節目表示（50 ごと） */
-  private showMilestone(combo: number): void {
-    this.milestoneText = `${combo} COMBO`;
-    this.milestoneShownAt = nowSeconds();
-    setData('milestone', combo);
+  /**
+   * ケージ風キャラの登場（30コンボごと）。紙吹雪は Canvas 側で出し、
+   * キャラと吹き出しの表示は main.ts 側（onCage）に任せる。
+   */
+  private triggerCage(combo: number): void {
+    setData('cage', combo);
+    const big = isCageBigCombo(combo);
+    const n = big ? 70 : 26;
+    for (let i = 0; i < n; i++) {
+      const an = Math.PI * (0.6 + Math.random() * 0.9); // 左下方向へ広げる
+      const sp = 120 + Math.random() * (big ? 340 : 240);
+      this.spawnParticle(
+        this.width - 56,
+        92,
+        Math.cos(an) * sp,
+        -Math.abs(Math.sin(an)) * sp * 0.4,
+        0.7 + Math.random() * 0.5,
+        CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+        5,
+      );
+    }
+    this.cb.onCage(combo, big);
   }
 
   /** コンボと tier をテスト用の入口（data 属性）へ出す */
@@ -389,12 +413,12 @@ export class Game {
     setData('comboTier', effectiveTier(this.combo, false));
   }
 
-  /** テスト/撮影用: コンボ数を直接セットする（節目なら節目表示も出す） */
+  /** テスト/撮影用: コンボ数を直接セットする（30の倍数ならケージも登場する） */
   debugSetCombo(n: number): void {
     this.combo = Math.max(0, Math.floor(n));
     this.maxCombo = Math.max(this.maxCombo, this.combo);
     this.syncCombo();
-    if (isComboMilestone(this.combo)) this.showMilestone(this.combo);
+    if (isCageCombo(this.combo)) this.triggerCage(this.combo);
   }
 
   /** 粒子を1つ出す。上限に達していたら出さない。死んだ粒子はプールから再利用する */
@@ -482,6 +506,14 @@ export class Game {
     const nowMs = nowSec * 1000;
     const fever = isFever(this.entry?.data.fever ?? [], nowSec);
     const fall = DIFFICULTIES[this.difficulty].fallSeconds;
+
+    // 歌詞の現在行が変わったら通知する（表示は main.ts 側の DOM）
+    const li = lyricIndexAt(this.entry?.lyrics ?? [], nowMs);
+    if (li !== this.lyricIndex) {
+      this.lyricIndex = li;
+      setData('lyricIndex', li);
+      this.cb.onLyric(li);
+    }
 
     const missed = sweepMisses(this.notes, nowMs);
     if (missed > 0) {
@@ -738,21 +770,6 @@ export class Game {
       g.fillStyle = this.judgeColor;
       g.font = `bold ${Math.round(28 * scale)}px sans-serif`;
       g.fillText(this.judgeText, W / 2, H * 0.5);
-      g.shadowBlur = 0;
-      g.globalAlpha = 1;
-    }
-    // コンボの節目表示: 画面中央に大きく短時間出す
-    const milestoneAge = frameAt - this.milestoneShownAt;
-    if (this.milestoneText && milestoneAge < MILESTONE_LIFE) {
-      const popK = Math.min(1, milestoneAge / 0.15);
-      const scale = 1.5 - 0.5 * popK;
-      const alpha = milestoneAge < 0.6 ? 1 : 1 - (milestoneAge - 0.6) / (MILESTONE_LIFE - 0.6);
-      g.globalAlpha = Math.max(0, alpha);
-      g.shadowColor = GOLD;
-      g.shadowBlur = 24;
-      g.fillStyle = GOLD;
-      g.font = `bold ${Math.round(52 * scale)}px sans-serif`;
-      g.fillText(this.milestoneText, W / 2, H * 0.2);
       g.shadowBlur = 0;
       g.globalAlpha = 1;
     }

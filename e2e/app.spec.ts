@@ -97,7 +97,7 @@ test('ヒーロー表示が、選んだ曲に切り替わる', async ({ page }) 
   await expect(page.locator('#hero-album')).toHaveText('Silver Screen Ascent');
 });
 
-test('効果音と振動のオン/オフが切り替わり、保存される', async ({ page }) => {
+test('効果音・振動・歌詞表示のオン/オフが切り替わり、保存される', async ({ page }) => {
   await page.goto('/');
   await openSettings(page);
   const sound = page.locator('#sound-button');
@@ -112,13 +112,22 @@ test('効果音と振動のオン/オフが切り替わり、保存される', a
   await vibrate.click();
   await expect(vibrate).toHaveAttribute('aria-pressed', 'false');
 
+  const lyrics = page.locator('#lyrics-button');
+  await expect(lyrics).toHaveAttribute('aria-pressed', 'true');
+  await lyrics.click();
+  await expect(lyrics).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('body')).toHaveAttribute('data-lyrics', 'off');
+  await expect(page.locator('#lyrics')).toBeHidden();
+
   // 保存されている（開き直しても戻らない）
   await page.reload();
   await openSettings(page);
   await expect(page.locator('#sound-button')).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('#vibrate-button')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#lyrics-button')).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('body')).toHaveAttribute('data-sound', 'off');
   await expect(page.locator('body')).toHaveAttribute('data-vibrate', 'off');
+  await expect(page.locator('body')).toHaveAttribute('data-lyrics', 'off');
 });
 
 test('ゲーム開始で音声が unlock され、AudioContext が running になる', async ({ page }) => {
@@ -301,23 +310,40 @@ test.describe('ヒット判定（実時間）', () => {
   });
 });
 
-test('コンボ tier と節目表示がテスト用の入口で確認できる', async ({ page }) => {
+test('コンボ tier とケージ登場がテスト用の入口で確認できる', async ({ page }) => {
   await page.goto('/?debug=1');
   await page.getByRole('button', { name: 'スタート' }).click();
   await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
-  // コンボを直接セットすると、tier と節目（50 ごと）が data 属性に出る
+  // コンボを直接セットすると、tier とケージ登場（30 ごと＋100 の倍数）が data 属性に出る
   await page.evaluate(() => {
     const w = window as unknown as { __pwaTest?: { setCombo?: (n: number) => void } };
     w.__pwaTest?.setCombo?.(100);
   });
   await expect(page.locator('body')).toHaveAttribute('data-combo', '100');
   await expect(page.locator('body')).toHaveAttribute('data-combo-tier', '4');
-  await expect(page.locator('body')).toHaveAttribute('data-milestone', '100');
+  await expect(page.locator('body')).toHaveAttribute('data-cage', '100');
+  // ケージのポップが出て、コンボ数とセリフが入っている（100 なので一段大きい big）
+  await expect(page.locator('#cage-pop')).toBeVisible();
+  await expect(page.locator('#cage-pop')).toHaveClass(/big/);
+  await expect(page.locator('#cage-combo-num')).toHaveText('100');
+  await expect(page.locator('#cage-line')).not.toHaveText('');
   await page.evaluate(() => {
     const w = window as unknown as { __pwaTest?: { setCombo?: (n: number) => void } };
     w.__pwaTest?.setCombo?.(30);
   });
   await expect(page.locator('body')).toHaveAttribute('data-combo-tier', '2');
+  await expect(page.locator('body')).toHaveAttribute('data-cage', '30');
+  await expect(page.locator('#cage-combo-num')).toHaveText('30');
+});
+
+test('演奏中に歌詞が表示される（現在の行が曲に合わせて出る）', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'スタート' }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+  // READY（2秒）のあと曲が進む。石畳のハイウェイの歌詞は曲頭からあるので、
+  // 現在の行に文字が出て、行インデックスが -1 でなくなる
+  await expect(page.locator('#lyric-current')).not.toHaveText('', { timeout: 20_000 });
+  await expect(page.locator('body')).not.toHaveAttribute('data-lyric-index', '-1');
 });
 
 test('manifest と Service Worker が使える', async ({ page }) => {

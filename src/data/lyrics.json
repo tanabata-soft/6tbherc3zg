@@ -1,0 +1,276 @@
+{
+ "highway": [
+  {
+   "startMs": 0,
+   "endMs": 4000,
+   "text": "(Hey Kiso Valley Check it out)"
+  },
+  {
+   "startMs": 4000,
+   "endMs": 8000,
+   "text": "Time to ride across the edge of time"
+  },
+  {
+   "startMs": 8000,
+   "endMs": 12000,
+   "text": "ニコラス・ケイジと君と僕の"
+  },
+  {
+   "startMs": 12000,
+   "endMs": 16000,
+   "text": "終わらない夜が今 幕を開ける"
+  },
+  {
+   "startMs": 16000,
+   "endMs": 20000,
+   "text": "石畳の道を 駆け抜けるハイウェイ"
+  },
+  {
+   "startMs": 20000,
+   "endMs": 24000,
+   "text": "過去と未来が 交差するこの場所で"
+  },
+  {
+   "startMs": 24000,
+   "endMs": 28000,
+   "text": "風が囁く 秘密の物語"
+  },
+  {
+   "startMs": 28000,
+   "endMs": 32000,
+   "text": "私はただ 幻を追いかけている"
+  },
+  {
+   "startMs": 32000,
+   "endMs": 36000,
+   "text": "木曽の山並み 霧に包まれて"
+  },
+  {
+   "startMs": 36000,
+   "endMs": 40000,
+   "text": "消えそうな背中 探しているの"
+  },
+  {
+   "startMs": 40000,
+   "endMs": 44000,
+   "text": "ハリウッドの星を 散りばめた空に"
+  },
+  {
+   "startMs": 44000,
+   "endMs": 48000,
+   "text": "奇跡を願う 私がいるの"
+  },
+  {
+   "startMs": 48000,
+   "endMs": 56000,
+   "text": "胸の鼓動が 激しく加速する"
+  },
+  {
+   "startMs": 56000,
+   "endMs": 64000,
+   "text": "もう 戻れない 運命の交差点で"
+  },
+  {
+   "startMs": 64000,
+   "endMs": 72000,
+   "text": "ニコラス・ケイジ 幻じゃない"
+  },
+  {
+   "startMs": 72000,
+   "endMs": 80000,
+   "text": "木曽の夜に 奇跡を起こして"
+  },
+  {
+   "startMs": 80000,
+   "endMs": 88000,
+   "text": "私を強く 抱きしめていて"
+  },
+  {
+   "startMs": 88000,
+   "endMs": 96000,
+   "text": "この瞬間を 永遠に変えて"
+  }
+ ],
+ "night": [
+  {
+   "startMs": 0,
+   "endMs": 3550,
+   "text": "Kiso no machi"
+  },
+  {
+   "startMs": 3550,
+   "endMs": 7100,
+   "text": "Misty valley night begins to fall"
+  },
+  {
+   "startMs": 7100,
+   "endMs": 10650,
+   "text": "A legendary aura in the air tonight"
+  },
+  {
+   "startMs": 10650,
+   "endMs": 14200,
+   "text": "Are you ready for the cinematic drive"
+  },
+  {
+   "startMs": 14200,
+   "endMs": 17762,
+   "text": "Furusato no machi wo hitori aruku"
+  },
+  {
+   "startMs": 17762,
+   "endMs": 21325,
+   "text": "Ancient mist descends upon the mountainside"
+  },
+  {
+   "startMs": 21325,
+   "endMs": 24887,
+   "text": "Silent whispers on the mountain breeze"
+  },
+  {
+   "startMs": 24887,
+   "endMs": 28450,
+   "text": "A solitary journey through the years"
+  },
+  {
+   "startMs": 28450,
+   "endMs": 32013,
+   "text": "Then suddenly a silhouette appears"
+  },
+  {
+   "startMs": 32013,
+   "endMs": 35575,
+   "text": "A classic hero from a distant screen"
+  },
+  {
+   "startMs": 35575,
+   "endMs": 39138,
+   "text": "A gaze that pierces through the misty air"
+  },
+  {
+   "startMs": 39138,
+   "endMs": 42700,
+   "text": "A timeless icon standing there alone"
+  },
+  {
+   "startMs": 42700,
+   "endMs": 46250,
+   "text": "Kono tokimeki wa nani"
+  },
+  {
+   "startMs": 46250,
+   "endMs": 49800,
+   "text": "Stranger's gaze a cinematic dream"
+  },
+  {
+   "startMs": 49800,
+   "endMs": 53350,
+   "text": "Sudden meeting a vibrant gleam"
+  },
+  {
+   "startMs": 53350,
+   "endMs": 56900,
+   "text": "Is this real or just a fantasy"
+  },
+  {
+   "startMs": 56900,
+   "endMs": 60450,
+   "text": "Kiso no yoru ni somaru"
+  },
+  {
+   "startMs": 60450,
+   "endMs": 64000,
+   "text": "A Hollywood persona by my side"
+  },
+  {
+   "startMs": 64000,
+   "endMs": 67550,
+   "text": "Feel the fire that we cannot hide"
+  },
+  {
+   "startMs": 67550,
+   "endMs": 71100,
+   "text": "In this cinematic world tonight"
+  },
+  {
+   "startMs": 71100,
+   "endMs": 74650,
+   "text": "Sono hitomi ni hisomu monogatari"
+  },
+  {
+   "startMs": 74650,
+   "endMs": 78200,
+   "text": "Echoes of a life lived on the screen"
+  },
+  {
+   "startMs": 78200,
+   "endMs": 81750,
+   "text": "A legendary aura sharp and keen"
+  },
+  {
+   "startMs": 81750,
+   "endMs": 85300,
+   "text": "A presence that is truly unseen"
+  },
+  {
+   "startMs": 85300,
+   "endMs": 88850,
+   "text": "We walk together through the cobblestone"
+  },
+  {
+   "startMs": 88850,
+   "endMs": 92400,
+   "text": "Soba-ko scent is floating in the air"
+  },
+  {
+   "startMs": 92400,
+   "endMs": 95950,
+   "text": "Kiso lacquerware reflects your intense eyes"
+  },
+  {
+   "startMs": 95950,
+   "endMs": 99500,
+   "text": "A surreal fusion that I cannot prize"
+  },
+  {
+   "startMs": 99500,
+   "endMs": 103062,
+   "text": "Kono tokimeki wa nani"
+  },
+  {
+   "startMs": 103062,
+   "endMs": 106625,
+   "text": "Stranger's gaze a cinematic dream"
+  },
+  {
+   "startMs": 106625,
+   "endMs": 110188,
+   "text": "Sudden meeting a vibrant gleam"
+  },
+  {
+   "startMs": 110188,
+   "endMs": 113750,
+   "text": "Is this real or just a fantasy"
+  },
+  {
+   "startMs": 113750,
+   "endMs": 117312,
+   "text": "Kiso no yoru ni somaru"
+  },
+  {
+   "startMs": 117312,
+   "endMs": 120875,
+   "text": "A Hollywood persona by my side"
+  },
+  {
+   "startMs": 120875,
+   "endMs": 124438,
+   "text": "Feel the fire that we cannot hide"
+  },
+  {
+   "startMs": 124438,
+   "endMs": 127730,
+   "text": "In this cinematic world tonight"
+  }
+ ]
+}

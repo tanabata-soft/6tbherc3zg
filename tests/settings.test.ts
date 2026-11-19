@@ -37,14 +37,16 @@ describe('効果音の設定（sound）', () => {
     expect(reloaded.isSoundOn()).toBe(false);
   });
 
-  it('判定ごとの音は PERFECT がいちばん高く、音量も大きい', async () => {
-    const { HIT_TONE } = await import('../src/sound');
-    expect(HIT_TONE.perfect.baseFreq).toBeGreaterThan(HIT_TONE.great.baseFreq);
-    expect(HIT_TONE.great.baseFreq).toBeGreaterThan(HIT_TONE.good.baseFreq);
-    expect(HIT_TONE.perfect.peak).toBeGreaterThan(HIT_TONE.great.peak);
-    expect(HIT_TONE.great.peak).toBeGreaterThan(HIT_TONE.good.peak);
+  it('判定ごとの音は PERFECT がいちばん長く、音量も大きい（GOOD は低く短い）', async () => {
+    const { HIT_BLIP } = await import('../src/sound');
+    const total = (j: 'perfect' | 'great' | 'good') => HIT_BLIP[j].dur1 + HIT_BLIP[j].dur2;
+    expect(total('perfect')).toBeGreaterThan(total('great'));
+    expect(total('great')).toBeGreaterThan(total('good'));
+    expect(HIT_BLIP.good.freq1).toBeLessThan(HIT_BLIP.perfect.freq1);
+    expect(HIT_BLIP.perfect.peak).toBeGreaterThan(HIT_BLIP.great.peak);
+    expect(HIT_BLIP.great.peak).toBeGreaterThan(HIT_BLIP.good.peak);
     // 曲を邪魔しない控えめな音量
-    expect(HIT_TONE.perfect.peak).toBeLessThanOrEqual(0.25);
+    expect(HIT_BLIP.perfect.peak).toBeLessThanOrEqual(0.25);
   });
 
   it('オフのときは音を出そうとしない（例外にもならない）', async () => {

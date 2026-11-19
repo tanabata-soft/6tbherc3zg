@@ -68,6 +68,18 @@
       <!-- ゲーム画面 -->
       <div id="game-screen" hidden>
         <canvas id="game-canvas"></canvas>
+        <!-- 歌詞（3行: 前／今／次）。タップは透過させる -->
+        <div id="lyrics" class="lyrics" aria-hidden="true">
+          <p class="lyric-line lyric-prev" id="lyric-prev"></p>
+          <p class="lyric-line lyric-current" id="lyric-current"></p>
+          <p class="lyric-line lyric-next" id="lyric-next"></p>
+        </div>
+        <!-- コンボの節目で登場するケージ風キャラ。タップは透過させる -->
+        <div id="cage-pop" class="cage-pop" hidden aria-hidden="true">
+          <p class="cage-bubble" id="cage-line"></p>
+          <img class="cage-img" id="cage-img" alt="">
+          <p class="cage-combo"><span id="cage-combo-num">30</span> COMBO</p>
+        </div>
         <p id="game-live" class="sr-only" aria-live="polite"></p>
       </div>
 
@@ -146,6 +158,12 @@
         <button id="vibrate-button" type="button" class="toggle" aria-label="振動" aria-pressed="true"><span class="toggle-state">オン</span></button>
       </div>
       <p class="note">振動は、対応している端末（Android など）だけで働きます。</p>
+
+      <div class="toggle-row">
+        <span>歌詞表示</span>
+        <button id="lyrics-button" type="button" class="toggle" aria-label="歌詞表示" aria-pressed="true"><span class="toggle-state">オン</span></button>
+      </div>
+      <p class="note">演奏中、画面の下に歌詞を3行出します。</p>
 
       <button id="settings-close-bottom" type="button" class="dialog-close-wide">閉じる</button>
     </dialog>

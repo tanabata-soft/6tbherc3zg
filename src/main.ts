@@ -9,6 +9,7 @@ import { isSoundOn, setSound } from './sound';
 import { isVibrateOn, setVibrate } from './haptics';
 import { audioState, isUnlocked, unlockAudio } from './audio';
 import { load, migrateStorage, requestPersist, save } from './storage';
+import cageUrl from './assets/cage.png';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -24,6 +25,7 @@ if (!SONGS.some((s) => s.id === selectedSong)) selectedSong = 'highway';
 let selectedDiff: Difficulty = load<Difficulty>('difficulty', 'easy');
 if (!(selectedDiff in DIFFICULTIES)) selectedDiff = 'easy';
 let offsetMs = clampOffset(load<number>('offset', 0));
+let lyricsOn = load<boolean>('lyrics', true);
 type BestMap = Record<string, number>;
 const bestKey = (song: SongId, diff: Difficulty): string => `${song}:${diff}`;
 const loadBests = (): BestMap => load<BestMap>('best', {});
@@ -98,11 +100,14 @@ function renderMenu(): void {
   $('offset-value').textContent = `${offsetMs > 0 ? '+' : ''}${offsetMs}ms`;
   renderToggle('sound-button', isSoundOn());
   renderToggle('vibrate-button', isVibrateOn());
+  renderToggle('lyrics-button', lyricsOn);
+  $('lyrics').hidden = !lyricsOn;
   setData('song', selectedSong);
   setData('difficulty', selectedDiff);
   setData('offset', offsetMs);
   setData('sound', isSoundOn() ? 'on' : 'off');
   setData('vibrate', isVibrateOn() ? 'on' : 'off');
+  setData('lyrics', lyricsOn ? 'on' : 'off');
 }
 
 function setOffset(next: number): void {
@@ -118,6 +123,11 @@ $('sound-button').addEventListener('click', () => {
 });
 $('vibrate-button').addEventListener('click', () => {
   setVibrate(!isVibrateOn());
+  renderMenu();
+});
+$('lyrics-button').addEventListener('click', () => {
+  lyricsOn = !lyricsOn;
+  save('lyrics', lyricsOn);
   renderMenu();
 });
 
@@ -145,6 +155,64 @@ settingsDialog.addEventListener('close', () => {
   document.body.classList.remove('dialog-open');
 });
 
+// ---- ケージ風キャラの登場（30コンボごと）と歌詞表示 ----
+/** ケージのセリフ（汎用的な熱いセリフをローテーションする。映画の台詞の直引用はしない） */
+const CAGE_LINES = [
+  'いいぞ、その調子だ！',
+  '燃えてきた！',
+  'それだ、完璧だ！',
+  '木曽の風を感じろ！',
+  'まだまだいける！',
+  '伝説はここからだ！',
+];
+/** 100コンボの倍数専用のセリフ */
+const CAGE_BIG_LINES = ['信じられない走りだ！', 'これが伝説ってやつだ！'];
+let cageLineIndex = 0;
+let cageByeTimer = 0;
+let cageHideTimer = 0;
+
+function showCage(combo: number, big: boolean): void {
+  const pop = $('cage-pop');
+  const lines = big ? CAGE_BIG_LINES : CAGE_LINES;
+  $('cage-line').textContent = lines[cageLineIndex++ % lines.length];
+  $('cage-combo-num').textContent = String(combo);
+  pop.classList.toggle('big', big);
+  pop.hidden = false;
+  pop.classList.remove('bye');
+  // 登場アニメーションを最初から再生する
+  pop.classList.remove('show');
+  void pop.offsetWidth;
+  pop.classList.add('show');
+  if (big) {
+    const canvas = $<HTMLCanvasElement>('game-canvas');
+    canvas.classList.remove('shake');
+    void canvas.offsetWidth;
+    canvas.classList.add('shake');
+  }
+  window.clearTimeout(cageByeTimer);
+  window.clearTimeout(cageHideTimer);
+  cageByeTimer = window.setTimeout(() => pop.classList.add('bye'), 1000);
+  cageHideTimer = window.setTimeout(() => {
+    pop.hidden = true;
+    pop.classList.remove('show', 'bye');
+  }, 1250);
+}
+
+/** 歌詞の3行（前／今／次）を出す。今の行が変わるたびに game から呼ばれる */
+function showLyric(index: number): void {
+  const lines = lastEntry.lyrics;
+  const cur = $('lyric-current');
+  const text = index >= 0 ? (lines[index]?.text ?? '') : '';
+  $('lyric-prev').textContent = index > 0 ? lines[index - 1].text : '';
+  cur.textContent = text;
+  $('lyric-next').textContent = index >= 0 && index + 1 < lines.length ? lines[index + 1].text : '';
+  if (text) {
+    cur.classList.remove('pop');
+    void cur.offsetWidth;
+    cur.classList.add('pop');
+  }
+}
+
 // ---- ゲーム ----
 const game = new Game($<HTMLCanvasElement>('game-canvas'), {
   onFinish: (result) => showResult(result),
@@ -152,6 +220,8 @@ const game = new Game($<HTMLCanvasElement>('game-canvas'), {
     show('menu');
     renderMenu();
   },
+  onCage: (combo, big) => showCage(combo, big),
+  onLyric: (index) => showLyric(index),
 });
 
 let lastEntry: SongEntry = songById(selectedSong);
@@ -210,6 +280,7 @@ $('back-button').addEventListener('click', () => {
 // 初回のタップで音声を unlock する（iPhone ではジェスチャの中で AudioContext を起こす必要がある）
 window.addEventListener('pointerdown', () => unlockAudio());
 
+$<HTMLImageElement>('cage-img').src = cageUrl;
 $('version').textContent = __APP_VERSION__;
 // デバッグモード: バージョンの表示を続けて 5 回タップで切り替え
 setupDebug($('debug-panel'), $('version-line'), [
@@ -229,6 +300,7 @@ exposeTestApi({
     playing: game.isPlaying,
     sound: isSoundOn(),
     vibrate: isVibrateOn(),
+    lyrics: lyricsOn,
     audioUnlocked: isUnlocked(),
     audioState: audioState(),
   }),
@@ -236,6 +308,10 @@ exposeTestApi({
     if (typeof patch.song === 'string' && SONGS.some((s) => s.id === patch.song)) selectedSong = patch.song as SongId;
     if (typeof patch.difficulty === 'string' && patch.difficulty in DIFFICULTIES) selectedDiff = patch.difficulty as Difficulty;
     if (typeof patch.offset === 'number') offsetMs = clampOffset(patch.offset);
+    if (typeof patch.lyrics === 'boolean') {
+      lyricsOn = patch.lyrics;
+      save('lyrics', lyricsOn);
+    }
     renderMenu();
   },
   startGame: () => startGame(),

@@ -6,7 +6,9 @@ import {
   effectiveTier,
   hitPitchMultiplier,
   hitPitchSemitones,
-  isComboMilestone,
+  CAGE_COMBO_INTERVAL,
+  isCageBigCombo,
+  isCageCombo,
   tierFx,
   tintColor,
 } from '../src/logic';
@@ -36,13 +38,22 @@ describe('コンボ tier の境界', () => {
     expect(effectiveTier(9, false)).toBe(0);
   });
 
-  it('節目は 50 ごと', () => {
-    expect(isComboMilestone(0)).toBe(false);
-    expect(isComboMilestone(49)).toBe(false);
-    expect(isComboMilestone(50)).toBe(true);
-    expect(isComboMilestone(100)).toBe(true);
-    expect(isComboMilestone(150)).toBe(true);
-    expect(isComboMilestone(151)).toBe(false);
+  it('ケージ登場は 30 ごと、一段大きい登場は 100 の倍数', () => {
+    expect(CAGE_COMBO_INTERVAL).toBe(30);
+    expect(isCageCombo(0)).toBe(false);
+    expect(isCageCombo(29)).toBe(false);
+    expect(isCageCombo(30)).toBe(true);
+    expect(isCageCombo(60)).toBe(true);
+    expect(isCageCombo(90)).toBe(true);
+    expect(isCageCombo(100)).toBe(true); // 100 の倍数も登場タイミング（一段大きい登場）
+    expect(isCageCombo(200)).toBe(true);
+    expect(isCageCombo(120)).toBe(true);
+    expect(isCageCombo(31)).toBe(false);
+    expect(isCageBigCombo(0)).toBe(false);
+    expect(isCageBigCombo(90)).toBe(false);
+    expect(isCageBigCombo(100)).toBe(true);
+    expect(isCageBigCombo(200)).toBe(true);
+    expect(isCageBigCombo(150)).toBe(false);
   });
 });
 
