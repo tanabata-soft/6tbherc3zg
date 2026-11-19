@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""譜面生成 v4: src/assets/*.mp3 を解析して src/data/charts.json を作る。
+"""譜面生成 v5（試行）/ v4: src/assets/*.mp3 を解析して src/data/charts.json を作る。
+
+v5 の変更点（v1.10.0。SONGS の chart_v5=True の曲だけに適用し、現在は
+『キラキラ木曽旅』(kira) のみ。根拠は docs/CHART-DESIGN.md の「譜面 v5」節）:
+- V5-1 特徴量レイヤー: HPSS で打撃成分（ドラム）と持続成分を分け、持続成分の
+  旋律帯域（600〜6000Hz）＝メロディ／声帯域（600〜3000Hz）×有声度＝ボーカル
+  の帯域別オンセット強度と、pyin の F0 をスロット属性に持つ。ゲートの物差しは
+  レイヤー強度を全帯域 strength の分布へ順位写像した eff（順位が同じなら値が
+  同じになるため、既存の閾値がそのまま意味を持つ）。
+- V5-2 主レイヤー選択: フレーズごとに主パート（drums/melody/vocal/mixed）を
+  決め（曲別バイアス＋サビの指定レイヤーへのボーナス。サビは連続フレーズを
+  グループとして1回だけ決める。通常フレーズ間はヒステリシス 0.08）、
+  パターン選択・同時押し・密度の床が見る strength を主レイヤーの eff に切替。
+- V5-3 音高コンター: 主レイヤーがメロディ/ボーカルのとき、F0 の動きとレーン
+  移動の方向の一致を fit コストに反映（|ΔF0|≥1半音: 同方向 −0.20／逆方向
+  +0.45／不動 +0.15。同音反復は jack のゲート緩和にも使う）。
+- chart_v5 でない曲は v4 と完全に同じ経路を通り、譜面は変わらない。
+  特徴量の照合と指標の道具は scripts/analyze-layers.py。
 
 v4 の変更点（オーナー指示「基本両手（両親指）でやることを前提にやりやすい譜面に」。
 根拠は docs/CHART-DESIGN.md の「両親指前提（譜面 v4）」節）:
@@ -93,6 +110,14 @@ SONGS = {
         "fever": [[64, 90]],
         # 音の強弱が均一で、通常ゲートでは同時押しが5組しか立たなかったため下げる（16で8組＝他曲並み）
         "chord_gate_drop": 16,
+        # v5 試行（V5-1〜V5-3）: シンセメロディ主体、サビはボーカル（調査メモ §4 の曲別方針）。
+        # chord_gate_drop は v5 でも外せなかった: ゲートを主レイヤーの strength
+        # （eff）に切り替えても、drop なしでは hard の同時押しが5組止まりで
+        # 設計基準（8組以上）を割る（均一な強弱そのものが原因で、レイヤーを
+        # 変えても小節頭の相対的な弱さは残るため）。drop 併用では10組になる。
+        "chart_v5": True,
+        "layer_bias": {"melody": 0.10},
+        "chorus_layer": "vocal",
     },
 }
 
@@ -263,6 +288,159 @@ def pitch_lanes(y, sr, times_s):
     return [int(np.searchsorted(q, m)) for m in midis]
 
 
+# ---- v5: 特徴量レイヤー（V5-1。設計は docs/CHART-DESIGN.md の譜面 v5 節） ----
+# スロットに「何の音か」の属性を付ける。帯域別オンセット強度（スペクトラル
+# フラックス）、HPSS の打撃/持続分離、pyin の F0 と有声確率から、
+# drums / melody / vocal の3レイヤーの strength を作る。
+# この段階では特徴量を計算するだけで、生成の挙動は変えない（使うのは V5-2 以降、
+# かつ SONGS で chart_v5 を指定した曲だけ）。
+
+LAYER_BANDS = {  # 特徴量レポート用の帯域（Hz）
+    "low": (0.0, 160.0),  # キック/ベース
+    "midlow": (160.0, 600.0),
+    "mid": (600.0, 3000.0),  # ボーカル/リードの存在域
+    "high": (6000.0, None),  # ハット/シンバル
+}
+MELODY_BAND = (600.0, 6000.0)  # リード楽器の存在域（harmonic 成分で見る）
+VOCAL_BAND = (600.0, 3000.0)  # ボーカルの存在域（harmonic 成分で見る）
+
+
+def _band_flux(mag, freqs, lo, hi):
+    """STFT 振幅の帯域内スペクトラルフラックス（正の差分の合計）の時系列。"""
+    hi = float("inf") if hi is None else hi
+    band = mag[(freqs >= lo) & (freqs < hi)]
+    if band.size == 0:
+        return np.zeros(mag.shape[1])
+    diff = np.diff(band, axis=1)
+    flux = np.maximum(diff, 0.0).sum(axis=0)
+    return np.concatenate([[0.0], flux])
+
+
+def _sample_max(series, times, sr):
+    """slot_strengths と同じ ±45ms 窓の最大値サンプリング。"""
+    out = []
+    w = max(1, int(0.045 * sr / HOP))
+    for t in times:
+        c = int(t * sr / HOP)
+        lo, hi = max(0, c - w), min(len(series), c + w + 1)
+        out.append(float(series[lo:hi].max()) if hi > lo else 0.0)
+    return np.array(out)
+
+
+def compute_layer_features(y, sr, times):
+    """スロット時刻列に対する v5 特徴量を dict で返す（すべて times と同じ長さ）。
+
+    drums: 打撃成分（HPSS percussive）のオンセット強度。
+    melody: 持続成分（HPSS harmonic）のリード帯域フラックス。
+    vocal: 持続成分のボーカル帯域フラックス × 有声確率（フレーム単位で掛けてから抽出）。
+    band_*: 全信号の帯域別フラックス（レポート用）。
+    f0: pyin の F0（midi。無声・未検出は nan）。voiced: 有声確率。
+    harm_rms: 持続成分の RMS（サステイン量。V5-4 用に併記）。
+    """
+    y_harm, y_perc = librosa.effects.hpss(y)
+    onset_perc = librosa.onset.onset_strength(y=y_perc, sr=sr, hop_length=HOP)
+    mag_full = np.abs(librosa.stft(y, n_fft=2048, hop_length=HOP))
+    mag_harm = np.abs(librosa.stft(y_harm, n_fft=2048, hop_length=HOP))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
+    flux_harm_mel = _band_flux(mag_harm, freqs, *MELODY_BAND)
+    flux_harm_voc = _band_flux(mag_harm, freqs, *VOCAL_BAND)
+    bands = {name: _band_flux(mag_full, freqs, lo, hi) for name, (lo, hi) in LAYER_BANDS.items()}
+
+    f0_hz, vflag, vprob = librosa.pyin(
+        y_harm,
+        fmin=librosa.note_to_hz("C2"),
+        fmax=librosa.note_to_hz("C6"),
+        sr=sr,
+        hop_length=HOP,
+    )
+    # pyin の voiced_prob は絶対値が極端に小さい（有声判定フレームでも平均 0.14
+    # 程度。実測: キラキラ木曽旅）ため、そのままでは重みとして使えない。
+    # 有声の物差しは voiced_flag（HMM の判定）を使い、±2フレームの移動平均で
+    # 0..1 の柔らかい値にする。voiced_prob は参考として併記しない。
+    flag = np.asarray(vflag, dtype=float)
+    if len(flag):
+        pad = 2
+        soft_voiced = np.convolve(
+            np.pad(flag, pad, mode="edge"), np.ones(2 * pad + 1) / (2 * pad + 1), mode="valid"
+        )
+    else:
+        soft_voiced = flag
+    n_fr = min(len(flux_harm_voc), len(soft_voiced))
+    vocal_series = flux_harm_voc[:n_fr] * soft_voiced[:n_fr]
+    frame_times = librosa.times_like(f0_hz, sr=sr, hop_length=HOP)
+    harm_rms = librosa.feature.rms(y=y_harm, hop_length=HOP)[0]
+
+    f0_out, voiced_out = [], []
+    for t in times:
+        j = int(np.argmin(np.abs(frame_times - t))) if len(frame_times) else 0
+        v = float(soft_voiced[j]) if len(soft_voiced) else 0.0
+        voiced_out.append(v)
+        val = float("nan")
+        for d in (0, -1, 1, -2, 2):
+            k = j + d
+            if 0 <= k < len(f0_hz) and not np.isnan(f0_hz[k]) and f0_hz[k] > 0:
+                val = float(librosa.hz_to_midi(f0_hz[k]))
+                break
+        f0_out.append(val)
+
+    return {
+        "drums": _sample_max(onset_perc, times, sr),
+        "melody": _sample_max(flux_harm_mel, times, sr),
+        "vocal": _sample_max(vocal_series, times, sr),
+        "band_low": _sample_max(bands["low"], times, sr),
+        "band_midlow": _sample_max(bands["midlow"], times, sr),
+        "band_mid": _sample_max(bands["mid"], times, sr),
+        "band_high": _sample_max(bands["high"], times, sr),
+        "f0": np.array(f0_out),
+        "voiced": np.array(voiced_out),
+        "harm_rms": _sample_max(harm_rms, times, sr),
+    }
+
+
+def _rank_map(values, ref):
+    """values の順位（パーセンタイル）を ref の分布へ写す。eff_strength 用。
+
+    主レイヤーの strength を全帯域 strength と同じ物差しに乗せるための変換で、
+    ゲートの閾値（strength のパーセンタイル）がレイヤー側でも同じ意味になる。
+    """
+    values = np.asarray(values, dtype=float)
+    order = np.argsort(values, kind="stable")
+    ranks = np.empty(len(values), dtype=float)
+    ranks[order] = np.arange(len(values), dtype=float)
+    pct = ranks / max(1, len(values) - 1)
+    return np.quantile(np.asarray(ref, dtype=float), pct)
+
+
+CHORUS_LAYER_BONUS = 0.30  # サビで曲別方針の主レイヤー（chorus_layer）へ寄せる量
+LAYER_HYSTERESIS = 0.08  # 主レイヤーの切替を抑える差（これ未満なら直前を継続）
+LAYER_MIXED_FLOOR = 0.16  # 全レイヤーがこの弱さなら mixed（v4 の挙動）にする
+
+
+def assign_layer_for(meta, pslots, is_chorus, prev_layer):
+    """フレーズの主レイヤーを決める（V5-2）。(レイヤー名, スコア) を返す。
+
+    スコアはフレーズ内スロットの lay_n 平均＋曲別バイアス（layer_bias）＋
+    サビの指定レイヤーへのボーナス。フレーズ途中で切り替えないための
+    ヒステリシスとして、直前の主レイヤーとの差が LAYER_HYSTERESIS 未満なら
+    直前を継続する。全レイヤーが弱いフレーズは mixed にする。
+    """
+    scores = {
+        layer: float(np.mean([s["lay_n"][layer] for s in pslots])) if pslots else 0.0
+        for layer in ("drums", "melody", "vocal")
+    }
+    for k, b in meta.get("layer_bias", {}).items():
+        if k in scores:
+            scores[k] += b
+    if is_chorus and meta.get("chorus_layer") in scores:
+        scores[meta["chorus_layer"]] += CHORUS_LAYER_BONUS
+    best = max(scores, key=lambda k: scores[k])
+    if scores[best] < LAYER_MIXED_FLOOR:
+        return "mixed", scores
+    if prev_layer in scores and prev_layer != best and scores[best] - scores[prev_layer] < LAYER_HYSTERESIS:
+        return prev_layer, scores
+    return best, scores
+
+
 def subdivision_positions(ext_beats):
     """拍列から作る16分細分位置（秒）の配列。ズレ検証用。"""
     pos = []
@@ -406,9 +584,11 @@ def plan_phrase(rng, phrase, unit_energy, unit_gate, unit_fever, is_chorus):
 class Realizer:
     """計画どおりにノーツを置きながら、レーンの流れと分布を保つ。"""
 
-    def __init__(self, slot_map, floor_pat):
+    def __init__(self, slot_map, floor_pat, use_eff=False):
         self.slot_map = slot_map
         self.floor_pat = floor_pat
+        # v5: フロア判定に主レイヤーの strength（slot["eff"]）を使う（V5-2）
+        self.use_eff = use_eff
         self.notes = []
         self.counts = [0, 0, 0, 0]
         self.head_counts = [0, 0, 0, 0]  # 単位の頭（rel=0）のノーツだけの分布。easy の偏り対策
@@ -513,7 +693,7 @@ class Realizer:
                 pen += 80.0 * (length - 4)
         return pen
 
-    def fit_cost(self, lanes, pattern_name, pitches, subs, grids):
+    def fit_cost(self, lanes, pattern_name, pitches, subs, grids, f0s=None):
         """フィット候補のコスト。小さいほど良い。3連続を作る候補は強く避ける。"""
         cost = self.run_penalty(lanes, subs, pattern_name)
         cost += self.side_penalty(lanes, grids)
@@ -526,9 +706,28 @@ class Realizer:
                 # 単位の頭は easy にも残るので、その分布も均す
                 cost += 1.6 * (self.head_counts[lane] / max(1, sum(self.head_counts)))
         cost += 0.05 * sum(abs(l - p) for l, p in zip(lanes, pitches))  # 音高は参考程度
+        if f0s:
+            # v5（V5-3）: 音高コンターとレーンの動きの一致。主レイヤーが
+            # melody / vocal のフレーズでのみ、呼び出し側が f0s を渡す。
+            # 上昇/下降（±1半音以上）にレーンが同方向へ動く候補を優遇し、
+            # 逆方向は罰金。同音（±0.5半音未満）でレーンが動く候補は軽い罰金。
+            for i in range(1, len(lanes)):
+                a, b = f0s[i - 1], f0s[i]
+                if a is None or b is None or np.isnan(a) or np.isnan(b):
+                    continue
+                df, dl = b - a, lanes[i] - lanes[i - 1]
+                if abs(df) >= 1.0:
+                    if dl == 0:
+                        cost += 0.15
+                    elif (df > 0) == (dl > 0):
+                        cost -= 0.20
+                    else:
+                        cost += 0.45
+                elif abs(df) < 0.5 and dl != 0:
+                    cost += 0.08
         return cost
 
-    def realize_unit(self, unit, pattern_name, mirror_only=False, anchor_floor=0.0):
+    def realize_unit(self, unit, pattern_name, mirror_only=False, anchor_floor=0.0, contour=False):
         pat = PATTERNS[pattern_name]
         placed = []
         if not pat["rel"]:
@@ -541,7 +740,10 @@ class Realizer:
         steps = []
         for rel, off in zip(pat["rel"], pat["off"]):
             slot = self.slot(unit, rel)
-            if slot is None or slot["strength"] < self.floor_pat:
+            if slot is None:
+                continue
+            floor_val = slot["eff"] if self.use_eff else slot["strength"]
+            if floor_val < self.floor_pat:
                 continue
             steps.append((rel, off, slot))
         if not steps:
@@ -550,9 +752,10 @@ class Realizer:
         pitches = [s["pitch_lane"] for _r, _o, s in steps]
         subs = [s["sub"] for _r, _o, s in steps]
         grids = [s["beat"] * 4 + s["sub"] for _r, _o, s in steps]
+        f0s = [s.get("f0") for _r, _o, s in steps] if contour else None
         best_lanes, best_cost = None, None
         for lanes in pattern_fits(offs, mirror_only=mirror_only):
-            c = self.fit_cost(lanes, pattern_name, pitches, subs, grids)
+            c = self.fit_cost(lanes, pattern_name, pitches, subs, grids, f0s)
             if best_cost is None or c < best_cost:
                 best_lanes, best_cost = lanes, c
         for (rel, _off, slot), lane in zip(steps, best_lanes):
@@ -815,6 +1018,31 @@ def process_song(song_id, meta, y, sr):
     pcts = {12, 25, 45, 50, 65, 75, 80, 84, 93} | {p - chord_drop for p in (75, 80, 84)}
     thr = {p: float(np.percentile(svals, p)) for p in sorted(pcts)}
 
+    # v5（V5-1）: chart_v5 の曲だけ、スロットにレイヤー特徴量を付ける。
+    # （主レイヤーの決定はモジュール側の assign_layer を使う）
+    # lay_n = レイヤー strength を曲内95パーセンタイルで割った値（レイヤー間の
+    # スコア比較用）、eff_by_layer = 全帯域 strength の分布へ順位写像した値
+    # （ゲート・フロアが参照する実効 strength 用）。eff はフレーズの主レイヤーが
+    # 決まるたびに差し替える（初期値は全帯域 strength）。
+    v5 = bool(meta.get("chart_v5"))
+    if v5:
+        feat = compute_layer_features(y, sr, [s["time"] for s in playable])
+        for layer in ("drums", "melody", "vocal"):
+            raw = feat[layer]
+            p95 = float(np.percentile(raw, 95)) or 1.0
+            lay_n = np.clip(raw / p95, 0.0, 1.5)
+            eff_map = _rank_map(raw, svals)
+            for i, s in enumerate(playable):
+                s.setdefault("lay_n", {})[layer] = float(lay_n[i])
+                s.setdefault("eff_by_layer", {})[layer] = float(eff_map[i])
+        for i, s in enumerate(playable):
+            s["f0"] = float(feat["f0"][i])
+            s["voiced"] = float(feat["voiced"][i])
+            s["eff"] = s["strength"]
+
+    def assign_layer(pslots, is_chorus, prev_layer):
+        return assign_layer_for(meta, pslots, is_chorus, prev_layer)
+
     # フレーズ分割
     bar_start_time = {b: float(ext_beats[b * 4]) for b in energies if b * 4 < len(ext_beats)}
     playable_bars = sorted(b for b, t in bar_start_time.items() if START_MS / 1000 <= t < eff_end)
@@ -844,46 +1072,133 @@ def process_song(song_id, meta, y, sr):
     def unit_fever(unit):
         return any(s is not None and s["fever"] for s in unit_slots(unit))
 
-    def unit_gate(unit, kind):
+    def unit_gate(unit, kind, layer=None):
         us = unit_slots(unit)
         # FEVER 区間はゲートのエネルギー条件も計画と同じく底上げする（強さの条件は不変）
         ge = unit_energy(unit) + (0.30 if unit_fever(unit) else 0.0)
+        # v5（V5-2）: 主レイヤーが決まっているフレーズでは、その strength
+        # （slot["eff"]、全帯域分布へ写像済み）をゲートの物差しにする
+        key = "eff" if layer is not None else "strength"
         if kind == "burst":
-            odd = [s["strength"] for r, s in enumerate(us) if s is not None and r % 2 == 1]
+            odd = [s[key] for r, s in enumerate(us) if s is not None and r % 2 == 1]
             return len(odd) >= 3 and float(np.mean(odd)) >= thr[45] and ge >= ue_p45
         if kind == "jack":
-            even = [s["strength"] for r, s in enumerate(us) if s is not None and r in (0, 2, 4)]
-            return len(even) == 3 and float(np.mean(even)) >= thr[65] and ge >= ue_p60
+            even = [s[key] for r, s in enumerate(us) if s is not None and r in (0, 2, 4)]
+            if len(even) == 3 and float(np.mean(even)) >= thr[65] and ge >= ue_p60:
+                return True
+            # v5（V5-3）: 主レイヤーが melody / vocal で、拍位置（rel 0,2,4）の
+            # F0 がほぼ同音なら、同音反復そのものが縦連の根拠になる（C4 の
+            # 間隔・回数の制限は従来どおり後段で担保される）
+            if layer in ("melody", "vocal"):
+                f0s = [s["f0"] for r, s in enumerate(us) if s is not None and r in (0, 2, 4)]
+                if (
+                    len(f0s) == 3
+                    and all(not np.isnan(f) for f in f0s)
+                    and max(f0s) - min(f0s) < 0.6
+                ):
+                    return True
+            return False
         return False
 
     # 計画 → 実体化（サビはモチーフを再登場させる）
     rng = random.Random(SEED + (0 if song_id == "highway" else 1))
-    realizer = Realizer(slot_map, thr[12])
+    realizer = Realizer(slot_map, thr[12], use_eff=v5)
     motif_plan = None
     chorus_count = 0
     chorus_first_bars = set()
     unit_plan_count = {}
+    phrase_is_chorus = []
     for phrase in phrases:
         fever_bars = sum(1 for b in phrase if any(f0 <= bar_start_time[b] < f1 for f0, f1 in fever))
-        is_chorus = fever_bars >= max(1, int(len(phrase) * 0.6))
+        phrase_is_chorus.append(fever_bars >= max(1, int(len(phrase) * 0.6)))
+
+    def phrase_slots(phrase):
+        return [
+            s
+            for bar in phrase
+            for half in (0, 1)
+            for s in unit_slots((bar, half))
+            if s is not None
+        ]
+
+    # v5（V5-2）: サビは連続するフレーズを1つの音楽的な単位として、グループ
+    # 全体のスロットで主レイヤーを1回だけ決める（サビの中で主レイヤーが
+    # 揺れないように）。通常フレーズは個別に決め、ヒステリシスは通常フレーズ
+    # 同士の間でのみ働かせる（サビの入り口では切り替えを妨げない）。
+    chorus_group_layer = {}
+    if v5:
+        gi = 0
+        while gi < len(phrases):
+            if not phrase_is_chorus[gi]:
+                gi += 1
+                continue
+            gj = gi
+            gsl = []
+            while gj < len(phrases) and phrase_is_chorus[gj]:
+                gsl += phrase_slots(phrases[gj])
+                gj += 1
+            g_layer, _gs = assign_layer(gsl, True, None)
+            for gk in range(gi, gj):
+                chorus_group_layer[gk] = g_layer
+            gi = gj
+    prev_layer = None
+    phrase_layers = []
+    for pi, phrase in enumerate(phrases):
+        is_chorus = phrase_is_chorus[pi]
+        # v5（V5-2）: フレーズの主レイヤーを先に決め、その strength を
+        # スロットの eff に差し替えてから計画・実体化する（フレーズ途中では変えない）
+        layer = None
+        if v5:
+            pslots = phrase_slots(phrase)
+            if pi in chorus_group_layer:
+                layer = chorus_group_layer[pi]
+                scores = {
+                    k: round(float(np.mean([s["lay_n"][k] for s in pslots])), 3) if pslots else 0.0
+                    for k in ("drums", "melody", "vocal")
+                }
+                scores["(group)"] = layer
+            else:
+                layer, raw_scores = assign_layer(pslots, is_chorus, prev_layer)
+                scores = {k: round(v, 3) for k, v in raw_scores.items()}
+            if layer != "mixed":
+                prev_layer = layer
+            # mixed のフレーズはヒステリシスの基準（prev_layer）を更新しない
+            for s in pslots:
+                s["eff"] = s["strength"] if layer == "mixed" else s["eff_by_layer"][layer]
+            phrase_layers.append(
+                {
+                    "bars": [phrase[0], phrase[-1]] if phrase else [],
+                    "layer": layer,
+                    "chorus": is_chorus,
+                    "scores": scores,
+                }
+            )
+        gate = (lambda u, k, _layer=layer: unit_gate(u, k, _layer)) if v5 else unit_gate
         if is_chorus:
             chorus_count += 1
             if phrase:
                 chorus_first_bars.add(phrase[0])
             units = [(bar, half) for bar in phrase for half in (0, 1)]
             if motif_plan is None:
-                units, plan = plan_phrase(rng, phrase, unit_energy, unit_gate, unit_fever, True)
+                units, plan = plan_phrase(rng, phrase, unit_energy, gate, unit_fever, True)
                 motif_plan = plan
             else:
                 plan = [motif_plan[i % len(motif_plan)] for i in range(len(units))]
         else:
-            units, plan = plan_phrase(rng, phrase, unit_energy, unit_gate, unit_fever, False)
+            units, plan = plan_phrase(rng, phrase, unit_energy, gate, unit_fever, False)
         mirror = is_chorus and chorus_count >= 2
+        contour = v5 and layer in ("melody", "vocal")
         for ui, (unit, name) in enumerate(zip(units, plan)):
             if is_chorus and chorus_count >= 3 and ui == len(units) - 1:
-                name = "wave16" if unit_gate(unit, "burst") else "wave"
+                name = "wave16" if gate(unit, "burst") else "wave"
             unit_plan_count[name] = unit_plan_count.get(name, 0) + 1
-            realizer.realize_unit(unit, name, mirror_only=mirror, anchor_floor=thr[25] if ui == 0 else thr[45])
+            realizer.realize_unit(
+                unit,
+                name,
+                mirror_only=mirror,
+                anchor_floor=thr[25] if ui == 0 else thr[45],
+                contour=contour,
+            )
 
     # 同時押し: サビの小節頭など特に強い拍に相方を足す（1小節に1組まで）
     notes = realizer.notes
@@ -895,13 +1210,17 @@ def process_song(song_id, meta, y, sr):
     chord_times = set()
     chord_ids = set()  # 同時押しのペアを構成するノーツ（生成後の修復で優先的に残す）
     for bar, head in sorted(head_notes.items()):
-        strong_fever = head["fever"] and head["strength"] >= thr[84 - chord_drop]
-        climax = bar in climax_bars and head["strength"] >= thr[80 - chord_drop]
-        chorus_start = bar in chorus_first_bars and head["fever"] and head["strength"] >= thr[75 - chord_drop]
-        if not (strong_fever or climax or chorus_start):
-            continue
         slot = slot_map.get((head["beat"], 0))
         if slot is None:
+            continue
+        # v5: 同時押しのゲートも主レイヤーの strength（eff、全帯域分布へ写像済み）
+        # で見る（V5-2 の物差しの切り替えを同時押しにも適用）。v4 曲は従来どおり
+        # 全帯域 strength。間引き等の優先度に使う note の strength は全帯域のまま。
+        gate_str = slot["eff"] if v5 else head["strength"]
+        strong_fever = head["fever"] and gate_str >= thr[84 - chord_drop]
+        climax = bar in climax_bars and gate_str >= thr[80 - chord_drop]
+        chorus_start = bar in chorus_first_bars and head["fever"] and gate_str >= thr[75 - chord_drop]
+        if not (strong_fever or climax or chorus_start):
             continue
         # C1: 相方は反対側のレーンだけ（両親指で1本ずつ押せる組み合わせにする）
         partner_lane = min(
@@ -1156,11 +1475,15 @@ def process_song(song_id, meta, y, sr):
         "patternNotes": pattern_notes,
         "drift": drift,
         "fever": fever,
+        "v5": v5,
+        "layers": phrase_layers,
     }
     print(f"{song_id}: BPM={bpm:.2f} -> {int(round(bpm))} counts={counts}")
     print(f"  diffs={json.dumps(rep['diffs'], ensure_ascii=False)} lanes={rep['lanes']}")
     print(f"  patterns(units)={unit_plan_count} patterns(notes)={pattern_notes}")
     print(f"  snapped={n_snapped} droppedAfterSnap={n_dropped} drift={json.dumps(drift, ensure_ascii=False)}")
+    if v5:
+        print(f"  layers={json.dumps(phrase_layers, ensure_ascii=False)}")
     return song_json, rep
 
 
