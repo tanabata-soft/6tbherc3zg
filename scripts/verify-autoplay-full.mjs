@@ -54,6 +54,17 @@ try {
     await page.waitForFunction("document.body.dataset.game === 'result'", null, {
       timeout: durationMs + 90_000,
     });
+    // オートプレイは常時フルコンボなので、結果画面の前にフルコンボ演出（約2.8秒）が
+    // 挟まる。演出が出ていたらタップでスキップし、結果画面が見えるまで待つ
+    await page.waitForFunction(
+      "!document.getElementById('result-screen').hidden || !document.getElementById('fullcombo').hidden",
+      null,
+      { timeout: 30_000 },
+    );
+    if (await page.locator('#fullcombo').isVisible()) await page.locator('#fullcombo').click();
+    await page.waitForFunction("!document.getElementById('result-screen').hidden", null, {
+      timeout: 30_000,
+    });
     const counts = await page.locator('#result-counts').textContent();
     const combo = Number(await page.locator('#result-combo').textContent());
     const miss = Number(/MISS (\d+)/.exec(counts ?? '')?.[1] ?? -1);

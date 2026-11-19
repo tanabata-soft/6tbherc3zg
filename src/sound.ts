@@ -1,4 +1,5 @@
-// 効果音は Web Audio で合成する（音声ファイルは持たない）。オン/オフ設定は必ず用意する。
+// 効果音は Web Audio で合成するのが基本（音声ファイルは持たない）。オン/オフ設定は必ず用意する。
+// 例外はフルコンボ演出のボイスだけ（v1.9.4。音声ファイル1本を src/assets に同梱する。下記）。
 // ヒット音は、曲の再生と同じ AudioContext（src/audio.ts）を使い、その場で合成する。
 //
 // ヒット音は v1.8.0 でオーナー決定の「F案（8bit系）」に差し替えた。
@@ -17,9 +18,10 @@
 // 周期的な揺れ（ビブラート等）は入れない。拍 tick の音は鳴らさない（tick スコアの計算は logic.ts）。
 // 完走時は完走音（F案＋1音）、猶予切れの失敗時は小さく下がる失敗音を鳴らす。
 // 空タップ（ノーツのないレーンを押したとき）も、ヒット音と聞き分けられる小さな音を鳴らす。
-import { audioContext, audioOutput } from './audio';
+import { audioContext, audioOutput, loadBuffer } from './audio';
 import { load, save } from './storage';
 import { hitPitchMultiplier, type Judge } from './logic';
+import fullComboVoiceUrl from './assets/fullcombo-voice.mp3';
 
 export type HitJudge = Exclude<Judge, 'miss'>;
 
@@ -317,6 +319,40 @@ export function playLatencyClickAt(whenSec: number): void {
     osc.start(whenSec);
     osc.stop(whenSec + LATENCY_CLICK.durSec + LATENCY_CLICK.decaySec + 0.02);
     document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'latency', at: whenSec } }));
+  } catch {
+    // 音が出せなくても続行する
+  }
+}
+
+/**
+ * フルコンボ演出のボイス（「FULL COMBO!」の叫び、約1.6秒）。
+ * オーナーが候補から選んだ A案（Gemini TTS の男性声 Charon で生成した自作音声）を
+ * `src/assets/fullcombo-voice.mp3` に同梱し、曲の音源と同じ経路
+ * （ビルドで assets に出力され、Service Worker の precache に入る）で配信する。
+ * 合成音ではなく音声ファイルなのは、人の声は合成では作れないため（このファイルだけの例外）。
+ *
+ * 効果音のオン/オフ設定には従わない: このボイスは効果音ではなく、演奏の締めの
+ * 演出そのもの（曲と同じ立場）で、鳴るのはフルコンボを達成した演奏の最後だけだからである
+ * （遅延チェックの拍クリックが設定に従わないのと同じ考え方）。
+ * 曲の再生管理（audio.ts の current）は触らず、マスターへ直接つないで鳴らす
+ * （演奏終了の時点では曲は止まっている）。
+ */
+export function preloadFullComboVoice(): void {
+  // 演奏開始のときに先読みしておく（締めで読み込み待ちにならないように）。
+  // 失敗しても演出は続行する（playFullComboVoice 側でも読み直す）
+  void loadBuffer(fullComboVoiceUrl).catch(() => undefined);
+}
+
+export async function playFullComboVoice(): Promise<void> {
+  try {
+    const buf = await loadBuffer(fullComboVoiceUrl);
+    const ac = audioContext();
+    void ac.resume();
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioOutput());
+    src.start();
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'fullcombo' } }));
   } catch {
     // 音が出せなくても続行する
   }

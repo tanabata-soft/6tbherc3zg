@@ -12,6 +12,7 @@ import {
   LATENCY_TAP_COUNT,
   findHit,
   isFever,
+  isFullCombo,
   judgeFor,
   makePlayNotes,
   rankFor,
@@ -69,6 +70,19 @@ describe('accuracy / rankFor', () => {
     expect(rankFor(84.9)).toBe('B');
     expect(rankFor(70)).toBe('B');
     expect(rankFor(69.9)).toBe('C');
+  });
+});
+
+describe('isFullCombo（フルコンボ判定）', () => {
+  it('ミスが0ならフルコンボ（PERFECT だけでも、GOOD 混じりでも）', () => {
+    expect(isFullCombo({ perfect: 370, great: 0, good: 0, miss: 0 })).toBe(true);
+    expect(isFullCombo({ perfect: 100, great: 20, good: 5, miss: 0 })).toBe(true);
+  });
+  it('ミスが1つでもあればフルコンボではない（長押しの失敗もミスに数える前提）', () => {
+    expect(isFullCombo({ perfect: 369, great: 0, good: 0, miss: 1 })).toBe(false);
+  });
+  it('判定されたノーツが0ならフルコンボではない（即時終了しただけの結果）', () => {
+    expect(isFullCombo(emptyCounts())).toBe(false);
   });
 });
 

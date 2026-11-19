@@ -75,6 +75,14 @@
           <p class="cage-bubble" id="cage-line"></p>
           <p class="cage-combo"><span id="cage-combo-num">30</span> COMBO</p>
         </div>
+        <!-- フルコンボ演出（演奏の締め。結果画面の前に全面で出す。タップでスキップできる）。
+             絵は src/main.ts がケージの絵（ゴーストライダー）を差し込む -->
+        <div id="fullcombo" class="fullcombo" hidden role="button" aria-label="フルコンボ！ タップで結果へ進む">
+          <img id="fullcombo-img" class="fullcombo-img" alt="" draggable="false" />
+          <div class="fullcombo-shade" aria-hidden="true"></div>
+          <p class="fullcombo-text">FULL COMBO</p>
+          <p class="fullcombo-sub"><span id="fullcombo-combo">0</span> COMBO</p>
+        </div>
         <p id="game-live" class="sr-only" aria-live="polite"></p>
       </div>
 

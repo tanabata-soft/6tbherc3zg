@@ -153,6 +153,16 @@ export function accuracy(counts: JudgementCounts): number {
 
 export type Rank = 'S' | 'A' | 'B' | 'C';
 
+/**
+ * フルコンボか（ミスが1つもなく、判定されたノーツが1つ以上ある）。
+ * 長押しの失敗も game.ts の集計で counts.miss に数えられるので、この定義で
+ * 「演奏の集計」と一致する。判定ノーツが0の結果（デバッグの即時終了など）は
+ * フルコンボにしない。
+ */
+export function isFullCombo(counts: JudgementCounts): boolean {
+  return counts.miss === 0 && totalNotes(counts) > 0;
+}
+
 export function rankFor(acc: number): Rank {
   if (acc >= 95) return 'S';
   if (acc >= 85) return 'A';

@@ -75,6 +75,27 @@ const SCREENS = [
     },
   },
   {
+    // フルコンボ演出（演奏の締め。結果画面の前に全面で出る）:
+    // テスト用の入口でオートプレイを有効にして数ノーツ叩き、ミス0のまま
+    // finishNow で終えると演出が出る（オートプレイは常時フルコンボ）
+    name: 'fullcombo',
+    open: async (page) => {
+      await page.goto(url + '?debug=1');
+      await page.waitForFunction(() => globalThis.__appStarted === true);
+      await page.evaluate(() =>
+        globalThis.__pwaTest.setState({ debugMode: true, autoplay: true }),
+      );
+      await page.click('#start-button');
+      await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
+      // オートプレイでスコアが伸びる（＝ノーツを叩いた）ことを確かめてから終える
+      await page.waitForFunction("document.body.dataset.score !== '0'", null, { timeout: 30_000 });
+      await page.evaluate(() => globalThis.__pwaTest.finishNow());
+      await page.waitForFunction("document.body.dataset.fullcombo === 'show'", null, { timeout: 10_000 });
+      // 文字が弾けて出るアニメーション（0.12秒＋0.45秒）を過ぎた頃に撮る
+      await page.waitForTimeout(700);
+    },
+  },
+  {
     // 新曲（gospel）の演奏画面: 背景ジャケットと歌詞表示の確認用
     name: 'game-gospel',
     open: async (page) => {

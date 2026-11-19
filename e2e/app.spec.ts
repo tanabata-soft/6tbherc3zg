@@ -745,8 +745,11 @@ test('設定のデバッグモードでオートプレイでき、結果がベ�
   await expect(page.locator('body')).not.toHaveAttribute('data-score', '0', { timeout: 30_000 });
   await expect(page.locator('body')).not.toHaveAttribute('data-combo', '0');
 
-  // 結果へ進む。オートプレイの印が出て、ベストスコアは 0 のまま（保存されていない）
+  // 結果へ進む。オートプレイはミス0なので、結果画面の前にフルコンボ演出が挟まる
+  // （演出はタップでスキップする）。オートプレイの印が出て、ベストスコアは 0 のまま（保存されていない）
   await page.getByRole('button', { name: 'プレイ中なら、いまの成績で結果画面へ進む' }).click();
+  await expect(page.locator('#fullcombo')).toBeVisible();
+  await page.locator('#fullcombo').click();
   await expect(page.locator('#result-screen')).toBeVisible();
   await expect(page.locator('#result-autoplay')).toBeVisible();
   await expect(page.locator('#result-autoplay')).toHaveText('オートプレイ');
@@ -754,6 +757,71 @@ test('設定のデバッグモードでオートプレイでき、結果がベ�
   await page.locator('#back-button').click();
   await openSettings(page);
   await expect(page.locator('#menu-best')).toHaveText('0');
+});
+
+test('フルコンボで終えると演出（ボイスつき）が出て、放っておいても結果画面へ進む', async ({ page }) => {
+  await page.goto('/?debug=1');
+  // ボイスの発火を app:sound イベントで確かめる
+  await page.evaluate(() => {
+    const w = window as unknown as { __sounds: { kind?: string }[] };
+    w.__sounds = [];
+    document.addEventListener('app:sound', (e) => w.__sounds.push((e as CustomEvent).detail));
+  });
+  // テスト用の入口でオートプレイを有効にする（オートプレイは常時フルコンボ）
+  await page.evaluate(() => {
+    const api = (window as unknown as { __pwaTest?: { setState?: (patch: Record<string, unknown>) => void } }).__pwaTest;
+    api?.setState?.({ debugMode: true, autoplay: true });
+  });
+  await page.getByRole('button', { name: 'スタート' }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+  // 数ノーツ叩いてから（ミス0のまま）、いまの成績で終える
+  await expect(page.locator('body')).not.toHaveAttribute('data-score', '0', { timeout: 30_000 });
+  await page.evaluate(() => {
+    const api = (window as unknown as { __pwaTest?: { finishNow?: () => void } }).__pwaTest;
+    api?.finishNow?.();
+  });
+  // 演出が出て、ボイスの音イベントが発火し、結果画面はまだ出ていない
+  await expect(page.locator('#fullcombo')).toBeVisible();
+  await expect(page.locator('body')).toHaveAttribute('data-fullcombo', 'show');
+  await expect(page.locator('#fullcombo')).toContainText('FULL COMBO');
+  await expect(page.locator('#result-screen')).toBeHidden();
+  const sounds = await page.evaluate(() => (window as unknown as { __sounds: { kind?: string }[] }).__sounds);
+  expect(sounds.some((s) => s.kind === 'fullcombo')).toBe(true);
+  // タップしなくても、演出の滞在時間（約2.8秒）が過ぎれば結果画面へ進む
+  await expect(page.locator('#result-screen')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('#fullcombo')).toBeHidden();
+});
+
+// 実時間（ゲーム側の時計でミスが付くまで待つ）に依存するので、リトライを許可する
+test.describe('フルコンボ演出（実時間）', () => {
+  test.describe.configure({ retries: 2 });
+
+  test('ミスがあるとフルコンボ演出は出ず、結果画面へ直行する', async ({ page }) => {
+    // 最初のノーツの時刻を譜面データから取る（石畳のハイウェイ／かんたん）
+    const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8')) as {
+      highway: { charts: { easy: [number, number, number?][] } };
+    };
+    const firstNoteMs = charts.highway.charts.easy[0][0];
+    await page.goto('/?debug=1');
+    await page.getByRole('button', { name: 'スタート' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+    // 最初のノーツを叩かず、ミス判定の窓（+160ms）を過ぎるまでゲーム側の時計で待つ
+    await page.waitForFunction(
+      (limit) => {
+        const api = (window as unknown as { __pwaTest?: { getState?: () => { songMs: number } } }).__pwaTest;
+        return (api?.getState?.().songMs ?? -1) > limit;
+      },
+      firstNoteMs + 200,
+      { timeout: 30_000 },
+    );
+    await page.evaluate(() => {
+      const api = (window as unknown as { __pwaTest?: { finishNow?: () => void } }).__pwaTest;
+      api?.finishNow?.();
+    });
+    // 演出は出ず、結果画面が直接見える
+    await expect(page.locator('#result-screen')).toBeVisible();
+    await expect(page.locator('#fullcombo')).toBeHidden();
+  });
 });
 
 test('デバッグモード: バージョンを 5 回タップで操作パネルが出る', async ({ page }) => {
