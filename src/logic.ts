@@ -286,7 +286,7 @@ export function isCageBigCombo(combo: number): boolean {
 /** ケージ登場のパターン（絵のモチーフ。主演映画が題材のリアル路線イラスト） */
 export type CagePattern = 'suit' | 'conair' | 'faceoff' | 'treasure' | 'ghostrider';
 
-/** カットインのズームの種別（standard: 標準 / fast: 速く＋到達時に小揺れ / cinematic: ゆっくり寄る） */
+/** 背景の push-in の種別（standard: 標準 / fast: 速く寄る / cinematic: ゆっくり寄る） */
 export type CageZoom = 'standard' | 'fast' | 'cinematic';
 
 /** 1回のケージ登場の内容（パターンとズームと big かどうか） */

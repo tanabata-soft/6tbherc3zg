@@ -16,11 +16,6 @@ import { isSoundOn, setSound } from './sound';
 import { isVibrateOn, setVibrate } from './haptics';
 import { audioState, isUnlocked, unlockAudio } from './audio';
 import { load, migrateStorage, requestPersist, save } from './storage';
-import cageSuitUrl from './assets/cage-suit.webp';
-import cageConairUrl from './assets/cage-conair.webp';
-import cageFaceoffUrl from './assets/cage-faceoff.webp';
-import cageTreasureUrl from './assets/cage-treasure.webp';
-import cageGhostriderUrl from './assets/cage-ghostrider.webp';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -167,14 +162,7 @@ settingsDialog.addEventListener('close', () => {
 });
 
 // ---- ケージ登場（30コンボごと）と歌詞表示 ----
-/** ケージの絵（パターンごと。主演映画がモチーフのリアル路線イラスト） */
-const CAGE_PATTERN_URLS: Record<CagePattern, string> = {
-  suit: cageSuitUrl,
-  conair: cageConairUrl,
-  faceoff: cageFaceoffUrl,
-  treasure: cageTreasureUrl,
-  ghostrider: cageGhostriderUrl,
-};
+// 絵は game.ts が Canvas の背景として薄く描く。ここではセリフとコンボ数の表示だけを担当する
 /** パターンごとのセリフ（モチーフに寄せた汎用的な熱いセリフ。映画の台詞の直引用はしない） */
 const CAGE_PATTERN_LINES: Record<CagePattern, string[]> = {
   suit: ['いいぞ、その調子だ！', '完璧なリズムだ！'],
@@ -193,7 +181,7 @@ const cageLineIndexes: Record<CagePattern, number> = {
 };
 let cageHideTimer = 0;
 
-/** 登場の滞在時間（ms）。CSS のフェード（cage-fade）の長さと合わせる */
+/** 登場の滞在時間（ms）。CSS のフェード（cage-fade）と game.ts の背景の滞在時間（CAGE_BG_DURATION_SEC）と合わせる */
 const CAGE_SHOW_MS = 1500;
 const CAGE_SHOW_BIG_MS = 1900;
 
@@ -203,21 +191,14 @@ function showCage(combo: number, appearance: CageAppearance): void {
   const lines = CAGE_PATTERN_LINES[pattern];
   $('cage-line').textContent = lines[cageLineIndexes[pattern]++ % lines.length];
   $('cage-combo-num').textContent = String(combo);
-  $<HTMLImageElement>('cage-img').src = CAGE_PATTERN_URLS[pattern];
   pop.dataset.pattern = pattern;
   pop.dataset.zoom = zoom;
   pop.classList.toggle('big', big);
-  // 登場アニメーションを最初から再生する
-  pop.classList.remove('show', 'zoom-standard', 'zoom-fast', 'zoom-cinematic');
+  // フェードを最初から再生する
+  pop.classList.remove('show');
   pop.hidden = false;
   void pop.offsetWidth;
-  pop.classList.add('show', `zoom-${zoom}`);
-  if (big) {
-    const canvas = $<HTMLCanvasElement>('game-canvas');
-    canvas.classList.remove('shake');
-    void canvas.offsetWidth;
-    canvas.classList.add('shake');
-  }
+  pop.classList.add('show');
   window.clearTimeout(cageHideTimer);
   cageHideTimer = window.setTimeout(() => {
     pop.hidden = true;
@@ -312,12 +293,6 @@ window.addEventListener('pointerdown', () => unlockAudio());
 document.addEventListener('selectstart', (e) => e.preventDefault());
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// ケージの絵は、初回の登場で読み込み待ちにならないよう先読みしておく
-for (const url of Object.values(CAGE_PATTERN_URLS)) {
-  const im = new Image();
-  im.src = url;
-}
-$<HTMLImageElement>('cage-img').src = CAGE_PATTERN_URLS.suit;
 $('version').textContent = __APP_VERSION__;
 // デバッグモード: バージョンの表示を続けて 5 回タップで切り替え
 setupDebug($('debug-panel'), $('version-line'), [

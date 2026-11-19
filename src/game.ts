@@ -28,6 +28,8 @@ import {
   tierFx,
   tintColor,
   type CageAppearance,
+  type CagePattern,
+  type CageZoom,
   type Difficulty,
   type Judge,
   type JudgementCounts,
@@ -38,6 +40,11 @@ import { audioContext, loadBuffer, nowSeconds, playBuffer, resumeAudio, stopCurr
 import { playCompleteSound, playEmptySound, playFailSound, playHitSound, startHoldSound, stopAllHoldSounds, stopHoldSound } from './sound';
 import { vibrateHit } from './haptics';
 import { setData } from './debug';
+import cageSuitUrl from './assets/cage-suit.webp';
+import cageConairUrl from './assets/cage-conair.webp';
+import cageFaceoffUrl from './assets/cage-faceoff.webp';
+import cageTreasureUrl from './assets/cage-treasure.webp';
+import cageGhostriderUrl from './assets/cage-ghostrider.webp';
 
 export interface GameResult {
   songTitle: string;
@@ -111,6 +118,43 @@ const RIPPLE_LIFE = 0.38;
 const JUDGE_LIFE = 0.55;
 /** ケージ登場時の紙吹雪の色 */
 const CONFETTI_COLORS = ['#ff6b6b', '#ffd166', '#4ecdc4', '#6c8cff', '#ff8ad8', '#ffffff'];
+/** ケージの絵（パターンごと。主演映画がモチーフのリアル路線イラスト） */
+const CAGE_BG_URLS: Record<CagePattern, string> = {
+  suit: cageSuitUrl,
+  conair: cageConairUrl,
+  faceoff: cageFaceoffUrl,
+  treasure: cageTreasureUrl,
+  ghostrider: cageGhostriderUrl,
+};
+/** ケージの絵の読み込み済み Image（パターンごとに 1 回だけ作る） */
+const cageBgImages = new Map<CagePattern, HTMLImageElement>();
+function cageBgImage(pattern: CagePattern): HTMLImageElement {
+  let img = cageBgImages.get(pattern);
+  if (!img) {
+    img = new Image();
+    img.src = CAGE_BG_URLS[pattern];
+    cageBgImages.set(pattern, img);
+  }
+  return img;
+}
+/**
+ * ケージ背景の不透明度のピーク。全面カットイン（v1.8.2）はプレイの支障になったため、
+ * 背景に薄く敷く形にした（オーナー決定）。ノーツはこの後に描くので常にはっきり見える。
+ */
+const CAGE_BG_PEAK_ALPHA = 0.2;
+const CAGE_BG_PEAK_ALPHA_BIG = 0.3;
+/** ケージ背景の滞在時間（秒）。main.ts の CAGE_SHOW_MS / CAGE_SHOW_BIG_MS と合わせる */
+const CAGE_BG_DURATION_SEC = 1.5;
+const CAGE_BG_DURATION_BIG_SEC = 1.9;
+/**
+ * 背景の中での push-in（奥から近づくズーム）。種別ごとに寄る速さと幅を変える。
+ * power は ease-out の強さ（大きいほど最初に速く寄る）。背景なので行き過ぎや揺れは入れない。
+ */
+const CAGE_BG_ZOOM: Record<CageZoom, { from: number; to: number; power: number }> = {
+  standard: { from: 0.92, to: 1.06, power: 2 },
+  fast: { from: 0.9, to: 1.08, power: 3 },
+  cinematic: { from: 0.96, to: 1.03, power: 1 },
+};
 /** 粒子の総数の上限（iPhone で 60fps を保つため。死んだ粒子はプールで再利用する） */
 const MAX_PARTICLES = 300;
 
@@ -131,6 +175,10 @@ export class Game {
   private maxCombo = 0;
   /** ケージの登場回数（パターンのローテーションに使う。演奏ごとに数え直す） */
   private cageCount = 0;
+  /** 表示中のケージ背景（絵・ズーム・big と、出した時刻＝AudioContext 時刻） */
+  private cageBg: { pattern: CagePattern; zoom: CageZoom; big: boolean; shownAt: number } | null = null;
+  /** 端末の「視差効果を減らす」設定（背景のズームを止めるかの判定に使う） */
+  private reducedMotion = false;
   private startAt = 0; // AudioContext 時刻（秒）
   private durationSec = 0;
   private bg: HTMLImageElement | null = null;
@@ -234,6 +282,8 @@ export class Game {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     document.addEventListener('visibilitychange', this.onVisibility);
+    // ケージの絵は、初回の登場で読み込み待ちにならないよう先読みしておく
+    for (const pattern of Object.keys(CAGE_BG_URLS) as CagePattern[]) cageBgImage(pattern);
   }
 
   destroy(): void {
@@ -275,6 +325,7 @@ export class Game {
     this.combo = 0;
     this.maxCombo = 0;
     this.cageCount = 0;
+    this.cageBg = null;
     this.particles = [];
     this.rings = [];
     this.pops = [];
@@ -415,7 +466,8 @@ export class Game {
 
   /**
    * ケージ登場（30コンボごと）。パターンとズームは logic の cageAppearance が決める。
-   * 紙吹雪は Canvas 側で画面中央から出し、絵とセリフの表示は main.ts 側（onCage）に任せる。
+   * 絵は Canvas の背景として薄く敷き（描画は loop 側）、紙吹雪も Canvas 側で画面中央から出す。
+   * セリフの表示だけ main.ts 側（onCage）に任せる。
    */
   private triggerCage(combo: number): void {
     const appearance = cageAppearance(combo, this.cageCount);
@@ -423,6 +475,10 @@ export class Game {
     setData('cage', combo);
     setData('cagePattern', appearance.pattern);
     setData('cageZoom', appearance.zoom);
+    this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this.cageBg = { pattern: appearance.pattern, zoom: appearance.zoom, big: appearance.big, shownAt: nowSeconds() };
+    // 初回の登場で読み込み待ちにならないよう、絵はここでも先読みしておく
+    cageBgImage(appearance.pattern);
     const big = appearance.big;
     const n = big ? 70 : 26;
     for (let i = 0; i < n; i++) {
@@ -605,6 +661,31 @@ export class Game {
     }
     g.fillStyle = fever ? 'rgba(30,20,0,.35)' : 'rgba(6,8,16,.62)';
     g.fillRect(0, 0, W, H);
+    // ケージ登場中は、絵を背景として薄く敷く。レーン・ノーツはこの後に描くので、
+    // 絵がどれだけ大きくてもノーツは常にはっきり手前に見える（全面カットインの反省から
+    // v1.8.4 でこの形にした）。出現・消滅は不透明度のフェード、動きは背景の中での
+    // ゆっくりした push-in（奥から近づく）。滞在の形は旧カットインの cage-fade と同じ
+    // （〜10% でフェードイン、72% からフェードアウト）。
+    if (this.cageBg) {
+      const img = cageBgImage(this.cageBg.pattern);
+      const dur = this.cageBg.big ? CAGE_BG_DURATION_BIG_SEC : CAGE_BG_DURATION_SEC;
+      const t = (frameAt - this.cageBg.shownAt) / dur;
+      if (t >= 1) {
+        this.cageBg = null;
+      } else if (img.complete && img.naturalWidth) {
+        const peak = this.cageBg.big ? CAGE_BG_PEAK_ALPHA_BIG : CAGE_BG_PEAK_ALPHA;
+        const env = t < 0.1 ? t / 0.1 : t > 0.72 ? (1 - t) / 0.28 : 1;
+        const zp = CAGE_BG_ZOOM[this.cageBg.zoom];
+        const eased = 1 - Math.pow(1 - t, zp.power);
+        const zoom = this.reducedMotion ? 1 : zp.from + (zp.to - zp.from) * eased;
+        const s = Math.max(W / img.naturalWidth, H / img.naturalHeight) * zoom;
+        const w = img.naturalWidth * s;
+        const hh = img.naturalHeight * s;
+        g.globalAlpha = peak * env;
+        g.drawImage(img, (W - w) / 2, (H - hh) / 2, w, hh);
+        g.globalAlpha = 1;
+      }
+    }
     if (fever) {
       g.strokeStyle = 'rgba(255,209,102,.85)';
       g.lineWidth = 6;

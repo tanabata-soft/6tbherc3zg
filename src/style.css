@@ -461,19 +461,6 @@ button:disabled {
   touch-action: none;
 }
 
-/* 100コンボの倍数でケージが登場したときの軽い画面シェイク */
-#game-canvas.shake {
-  animation: canvas-shake 0.32s ease-in-out;
-}
-
-@keyframes canvas-shake {
-  0%, 100% { transform: translate(0, 0); }
-  20% { transform: translate(-4px, 2px); }
-  40% { transform: translate(4px, -2px); }
-  60% { transform: translate(-3px, -1px); }
-  80% { transform: translate(3px, 1px); }
-}
-
 /* 歌詞（3行）。判定ライン（画面の82%）より下の帯に小さく出す。タップは透過 */
 .lyrics {
   position: absolute;
@@ -519,23 +506,25 @@ button:disabled {
   }
 }
 
-/* ケージ登場（コンボの節目）: 画面の奥から全面近くへズームするカットイン。
-   セリフを見せたあとフェードアウトする。タップは透過。
-   滞在時間は main.ts の CAGE_SHOW_MS / CAGE_SHOW_BIG_MS と合わせる */
+/* ケージ登場（コンボの節目）: 絵は Canvas の背景に薄く敷かれる（game.ts が描く）。
+   ここはセリフとコンボ数だけを、画面上部中央の控えめな表示で出す。タップは透過。
+   上端は Canvas が描くスコア行（〜34px）と FEVER 表示（〜72px）に重ならない位置にし、
+   下部の歌詞（.lyrics）とも重ならない。滞在時間は main.ts の CAGE_SHOW_MS /
+   CAGE_SHOW_BIG_MS と合わせる */
 .cage-pop {
   position: absolute;
-  inset: 0;
+  top: calc(var(--safe-top) + 52px);
+  left: 8px;
+  right: 8px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 4px;
   pointer-events: none;
   z-index: 5;
-  /* 周囲を落とした暗いビネットで、映画のワンシーンのように見せる */
-  background: radial-gradient(ellipse at center, rgb(0 0 0 / 0.16) 42%, rgb(0 0 0 / 0.62) 100%);
 }
 
-/* 出現中はフェードイン→静止→フェードアウトを 1 本のアニメーションで通す。
-   ピークの不透明度は 0.97 に抑え、背後のノーツが完全には消えないようにする */
+/* 出現中はフェードイン→静止→フェードアウトを 1 本のアニメーションで通す */
 .cage-pop.show {
   animation: cage-fade 1.5s linear forwards;
 }
@@ -559,113 +548,19 @@ button:disabled {
   }
 }
 
-/* 絵の額縁（金枠＋影）。絵は矩形のまま cover で見せる */
-.cage-frame {
-  position: relative;
-  height: min(76dvh, 190vw);
-  aspect-ratio: 1 / 2;
-  border: 2px solid var(--gold);
-  border-radius: 16px;
-  overflow: hidden;
-  background: var(--surface);
-  box-shadow:
-    0 18px 60px rgb(0 0 0 / 0.75),
-    0 0 0 6px rgb(0 0 0 / 0.35);
-}
-
-.cage-pop.big .cage-frame {
-  height: min(88dvh, 220vw);
-}
-
-.cage-pop.show .cage-frame {
-  animation: cage-zoom-standard 1.5s ease-out forwards;
-}
-
-.cage-pop.big.show .cage-frame {
-  animation-duration: 1.9s;
-}
-
-.cage-pop.zoom-fast.show .cage-frame {
-  animation-name: cage-zoom-fast;
-}
-
-.cage-pop.zoom-cinematic.show .cage-frame {
-  animation-name: cage-zoom-cinematic;
-}
-
-/* 標準: 奥から寄って、最後はわずかに寄り続ける */
-@keyframes cage-zoom-standard {
-  0% {
-    transform: scale(0.18);
-  }
-  55% {
-    transform: scale(1);
-  }
-  100% {
-    transform: scale(1.05);
-  }
-}
-
-/* 速い: 行き過ぎて戻り、到達直後に小さく震える */
-@keyframes cage-zoom-fast {
-  0% {
-    transform: scale(0.18);
-  }
-  30% {
-    transform: scale(1.07);
-  }
-  42% {
-    transform: scale(1) translate(2px, -1px);
-  }
-  50% {
-    transform: scale(1) translate(-2px, 1px);
-  }
-  58% {
-    transform: scale(1);
-  }
-  100% {
-    transform: scale(1.05);
-  }
-}
-
-/* ゆっくり: 全体を通して静かに寄り続ける */
-@keyframes cage-zoom-cinematic {
-  0% {
-    transform: scale(0.45);
-  }
-  100% {
-    transform: scale(1.06);
-  }
-}
-
-.cage-img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-/* セリフとコンボ数は絵の下部に重ねる（下端は暗く落として読みやすくする） */
-.cage-caption {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 30px 12px 12px;
-  text-align: center;
-  background: linear-gradient(to top, rgb(0 0 0 / 0.8) 55%, transparent);
-}
-
+/* セリフは半透明の暗いピル型の帯に入れて、背景の絵の上でも読めるようにする */
 .cage-bubble {
   display: inline-block;
-  margin: 0 0 4px;
-  padding: 5px 12px;
-  background: var(--text);
-  color: var(--bg);
-  border-radius: 12px;
+  margin: 0;
+  padding: 5px 14px;
+  background: rgb(0 0 0 / 0.55);
+  color: var(--text);
+  border: 1px solid rgb(255 255 255 / 0.28);
+  border-radius: 999px;
   font-size: 0.92rem;
   font-weight: 700;
   line-height: 1.35;
+  text-align: center;
 }
 
 .cage-pop.big .cage-bubble {
