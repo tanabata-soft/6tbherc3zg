@@ -141,14 +141,30 @@ function cageBgImage(pattern: CagePattern): HTMLImageElement {
   return img;
 }
 /**
- * ケージ背景の不透明度のピーク。全面カットイン（v1.8.2）はプレイの支障になったため、
- * 背景に薄く敷く形にした（オーナー決定）。ノーツはこの後に描くので常にはっきり見える。
+ * ケージ背景の不透明度のピーク。v1.8.4 では背景に薄く敷いた（通常 0.2 / big 0.3）が、
+ * オーナー指示（「背景がニコラスに置き換わるぐらい。完全に置き換わって数秒そのまま」）で
+ * v1.8.6 からは通常・big とも 1.0 にし、背景がケージの絵に完全に置き換わる形にした。
+ * 全面カットイン（v1.8.2）と違い、絵はあくまで背景として描かれ、レーン・ノーツ・判定は
+ * その後にフル不透明度で描くので、プレイの視認性は構造的に保たれる。
  */
-const CAGE_BG_PEAK_ALPHA = 0.2;
-const CAGE_BG_PEAK_ALPHA_BIG = 0.3;
-/** ケージ背景の滞在時間（秒）。main.ts の CAGE_SHOW_MS / CAGE_SHOW_BIG_MS と合わせる */
-const CAGE_BG_DURATION_SEC = 1.5;
-const CAGE_BG_DURATION_BIG_SEC = 1.9;
+const CAGE_BG_PEAK_ALPHA = 1;
+/**
+ * ケージ背景の上に敷く暗幕の濃さ（ピーク時）。明るい絵（ナショナル・トレジャー）では
+ * 白いレーン線（不透明度 .12）が埋もれるため、表示中だけ最小限の暗幕を入れる。
+ * 通常時のベール（.62）よりずっと薄く、背景が置き換わる印象は損なわない。
+ * ノーツ・判定枠・判定ラインはこの後に描くので影響を受けない。
+ */
+const CAGE_BG_VEIL_ALPHA = 0.18;
+/** ケージ背景の包絡（秒）: フェードイン → ピークのままキープ → フェードアウト */
+const CAGE_BG_FADE_IN_SEC = 0.3;
+const CAGE_BG_FADE_OUT_SEC = 0.6;
+/**
+ * ケージ背景の滞在時間（秒）。main.ts の CAGE_SHOW_MS / CAGE_SHOW_BIG_MS と合わせる。
+ * 通常は 0.3（イン）＋ 約2秒キープ ＋ 0.6（アウト）= 約2.9秒。
+ * big はキープを長くして約3.6秒。
+ */
+const CAGE_BG_DURATION_SEC = 2.9;
+const CAGE_BG_DURATION_BIG_SEC = 3.6;
 /**
  * 背景の中での push-in（奥から近づくズーム）。種別ごとに寄る速さと幅を変える。
  * power は ease-out の強さ（大きいほど最初に速く寄る）。背景なので行き過ぎや揺れは入れない。
@@ -509,7 +525,8 @@ export class Game {
 
   /**
    * ケージ登場（30コンボごと）。パターンとズームは logic の cageAppearance が決める。
-   * 絵は Canvas の背景として薄く敷き（描画は loop 側）、紙吹雪も Canvas 側で画面中央から出す。
+   * 絵は Canvas の背景として敷き（描画は loop 側。v1.8.6 からピーク不透明度 1.0 で
+   * 背景が完全に置き換わる）、紙吹雪も Canvas 側で画面中央から出す。
    * セリフの表示だけ main.ts 側（onCage）に任せる。
    */
   private triggerCage(combo: number): void {
@@ -708,29 +725,37 @@ export class Game {
     }
     g.fillStyle = fever ? 'rgba(30,20,0,.35)' : 'rgba(6,8,16,.62)';
     g.fillRect(0, 0, W, H);
-    // ケージ登場中は、絵を背景として薄く敷く。レーン・ノーツはこの後に描くので、
-    // 絵がどれだけ大きくてもノーツは常にはっきり手前に見える（全面カットインの反省から
-    // v1.8.4 でこの形にした）。出現・消滅は不透明度のフェード、動きは背景の中での
-    // ゆっくりした push-in（奥から近づく）。滞在の形は旧カットインの cage-fade と同じ
-    // （〜10% でフェードイン、72% からフェードアウト）。
+    // ケージ登場中は、絵を背景として敷く。レーン・ノーツはこの後に描くので、
+    // ノーツは常にはっきり手前に見える（全面カットインの反省から v1.8.4 でこの形にした）。
+    // v1.8.6 からはピーク不透明度 1.0 で背景（ジャケット絵＋ベール）が完全に置き換わり、
+    // 数秒そのままになる。出現・消滅は不透明度のフェード（イン 0.3秒 → キープ →
+    // アウト 0.6秒）、動きは背景の中でのゆっくりした push-in（奥から近づく）。
+    // 表示中に次の登場が来た場合は、triggerCage が cageBg を新しいパターン・時刻で
+    // 上書きするので、包絡は新しい登場の頭から再生される（重なって破綻はしない）。
     if (this.cageBg) {
       const img = cageBgImage(this.cageBg.pattern);
       const dur = this.cageBg.big ? CAGE_BG_DURATION_BIG_SEC : CAGE_BG_DURATION_SEC;
-      const t = (frameAt - this.cageBg.shownAt) / dur;
+      const elapsed = frameAt - this.cageBg.shownAt;
+      const t = elapsed / dur;
       if (t >= 1) {
         this.cageBg = null;
       } else if (img.complete && img.naturalWidth) {
-        const peak = this.cageBg.big ? CAGE_BG_PEAK_ALPHA_BIG : CAGE_BG_PEAK_ALPHA;
-        const env = t < 0.1 ? t / 0.1 : t > 0.72 ? (1 - t) / 0.28 : 1;
+        const env = Math.max(
+          0,
+          Math.min(elapsed / CAGE_BG_FADE_IN_SEC, (dur - elapsed) / CAGE_BG_FADE_OUT_SEC, 1),
+        );
         const zp = CAGE_BG_ZOOM[this.cageBg.zoom];
         const eased = 1 - Math.pow(1 - t, zp.power);
         const zoom = this.reducedMotion ? 1 : zp.from + (zp.to - zp.from) * eased;
         const s = Math.max(W / img.naturalWidth, H / img.naturalHeight) * zoom;
         const w = img.naturalWidth * s;
         const hh = img.naturalHeight * s;
-        g.globalAlpha = peak * env;
+        g.globalAlpha = CAGE_BG_PEAK_ALPHA * env;
         g.drawImage(img, (W - w) / 2, (H - hh) / 2, w, hh);
         g.globalAlpha = 1;
+        // 明るい絵の上でレーン線が埋もれないよう、表示中だけ薄い暗幕を敷く（包絡に連動）
+        g.fillStyle = `rgba(5,6,12,${(CAGE_BG_VEIL_ALPHA * env).toFixed(3)})`;
+        g.fillRect(0, 0, W, H);
       }
     }
     if (fever) {

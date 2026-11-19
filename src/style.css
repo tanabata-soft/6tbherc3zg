@@ -506,7 +506,8 @@ button:disabled {
   }
 }
 
-/* ケージ登場（コンボの節目）: 絵は Canvas の背景に薄く敷かれる（game.ts が描く）。
+/* ケージ登場（コンボの節目）: 絵は Canvas の背景に敷かれる（game.ts が描く。
+   v1.8.6 からピーク不透明度 1.0 で背景が完全に置き換わる）。
    ここはセリフとコンボ数だけを、画面上部中央の控えめな表示で出す。タップは透過。
    上端は Canvas が描くスコア行（〜34px）と FEVER 表示（〜72px）に重ならない位置にし、
    下部の歌詞（.lyrics）とも重ならない。滞在時間は main.ts の CAGE_SHOW_MS /
@@ -524,23 +525,41 @@ button:disabled {
   z-index: 5;
 }
 
-/* 出現中はフェードイン→静止→フェードアウトを 1 本のアニメーションで通す */
+/* 出現中はフェードイン→静止→フェードアウトを 1 本のアニメーションで通す。
+   包絡は game.ts の背景（フェードイン 0.3秒 → キープ → フェードアウト 0.6秒）と合わせる:
+   通常 2.9秒（10.3% でイン完了、79.3% からアウト）、big 3.6秒（8.3% / 83.3%） */
 .cage-pop.show {
-  animation: cage-fade 1.5s linear forwards;
+  animation: cage-fade 2.9s linear forwards;
 }
 
 .cage-pop.big.show {
-  animation-duration: 1.9s;
+  animation-name: cage-fade-big;
+  animation-duration: 3.6s;
 }
 
 @keyframes cage-fade {
   0% {
     opacity: 0;
   }
-  10% {
+  10.3% {
     opacity: 0.97;
   }
-  72% {
+  79.3% {
+    opacity: 0.97;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes cage-fade-big {
+  0% {
+    opacity: 0;
+  }
+  8.3% {
+    opacity: 0.97;
+  }
+  83.3% {
     opacity: 0.97;
   }
   100% {

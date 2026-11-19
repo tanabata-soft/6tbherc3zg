@@ -2,16 +2,20 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.8.5
+更新: 2026-11-19・版 v1.8.6
 
 ## 今の状態
 
-- アプリ名は『木曽ケイジビート』（副題: ニコラスケイジと木曽と私）。v1.2.0 で『木曽リズムゲーム』から表示名だけを変更した。
+- アプリ名は『キソケイジビート』（副題: ニコラスケイジと木曽と私）。v1.8.6 で『木曽ケイジビート』から、v1.2.0 で『木曽リズムゲーム』から、表示名だけを変更した。
   - **アプリID（package.json の `name` = `kiso-rhythm-game`）は据え置き**。表示名を変えても ID は変えないこと（保存データのキー接頭辞・復旧範囲・キャッシュが ID 由来で、変えると利用者の記録が消える）。
   - 表示名の正本は `vite.config.ts` の `APP_NAME` と `index.html`（title / apple-mobile-web-app-title / ブランド題字）の2か所。check:content が一致を検査する。
 - 曲: 『石畳のハイウェイ』(BPM 135) / 『Kiso Night Silhouette』(BPM 150)。**v1.6.0 から音ゲー用ショート編集**（石畳 104.8秒 / Kiso Night 127.7秒。全長版は `assets-full/` に保管、編集手順は `assets-full/README.md`）
   - 譜面は `scripts/generate-charts.py`（librosa）で生成（v3方式、下記）。ノーツ数: 石畳 146/263/350、Kiso Night 191/383/499（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96]、Kiso Night [44,67][96,127]（秒、編集後のタイムライン）
+- v1.8.6 の変更:
+  - **ケージ背景を「完全に置き換わる」濃さにした**（オーナー指示「背景がニコラスに置き換わるぐらい。完全に置き換わって数秒そのまま」）。ピーク不透明度は通常・big とも 1.0（`src/game.ts` の `CAGE_BG_PEAK_ALPHA` 単一定数に整理。旧 0.2 / 0.3 の `CAGE_BG_PEAK_ALPHA_BIG` は廃止）。包絡は絶対時間ベース: フェードイン `CAGE_BG_FADE_IN_SEC` 0.3秒 → 1.0 のままキープ → フェードアウト `CAGE_BG_FADE_OUT_SEC` 0.6秒。滞在は `CAGE_BG_DURATION_SEC` 2.9秒（キープ約2秒）/ `CAGE_BG_DURATION_BIG_SEC` 3.6秒。main.ts の `CAGE_SHOW_MS`（2900）/ `CAGE_SHOW_BIG_MS`（3600）と CSS の cage-fade（2.9秒）/ cage-fade-big（3.6秒、big 専用キーフレームを新設）の3か所を一致させること。push-in ズーム（`CAGE_BG_ZOOM`）は不変でキープ中も寄り続ける。表示中に次の登場が来た場合は、triggerCage が `cageBg` を新しいパターン・shownAt で上書きし、包絡は頭から再生される（main.ts の showCage もアニメーション再起動＋タイマー再設定）。発火条件・パターン割り当て・`cageAppearance`・data 属性は不変。全面カットイン（v1.8.2）と違い、絵は背景として描かれレーン・ノーツ・判定は後にフル不透明度で描くため、視認性は構造的に保たれる。
+  - **明るい絵向けの薄い暗幕を追加**: ナショナル・トレジャー（明るい絵）のピーク時に白いレーン線（不透明度 .12）が埋もれるため、ケージ背景の表示中だけ絵の上に `CAGE_BG_VEIL_ALPHA` 0.18 の暗幕を包絡に連動して敷く（通常時のベール .62 よりずっと薄く、置き換わりの印象は損なわない）。一時撮影（setCombo を3回呼んで treasure を出し、ピークで撮影）で落下ノーツ・長押しの帯・判定枠・判定ラインが明瞭なことを確認済み。shots の game-combo は撮影タイミングを登場後 1000ms に変更し、ピーク（キープ中）を撮るようにした。
+  - **アプリ名を『キソケイジビート』に変更**（オーナー指示。表示名のみ）。適用箇所: `vite.config.ts` の `APP_NAME`（manifest の name / short_name に伝播）、index.html の `<title>` / apple-mobile-web-app-title / description / 題字 h1、README 見出し、e2e の見出し確認、CLAUDE.md・本書・PROGRESS.md の現行表記（履歴の節は旧名のまま）。サブタイトル「ニコラスケイジと木曽と私」は不変。**アプリID（package.json の `name` = `kiso-rhythm-game`）・保存キー・リポジトリ名・公開 URL は据え置き**。
 - v1.8.5 の変更:
   - **通常タップのヒット音をタンバリン音（E案）に差し替え**（オーナーが候補 A〜F から選択。参照音は ~/workspace/your_files/tamb-e.wav で、numpy 合成のレシピを Web Audio で再現した）。正本は `src/sound.ts` の `TAMB_PARTIALS`（金属片の部分音12本: 3400/3950/4480/5120/5760/6480/7250/8100/9020/10100/11300/12600 Hz、振幅 0.25〜0.8、減衰率 6〜14/s）/ `TAMB_GRAINS`（3〜12kHz 帯域ノイズの小バースト 10〜30ms を冒頭100ms 内に24粒）/ `TAMB_AIR`（5〜14kHz、減衰率 10/s）/ `TAMB_ATTACK_SEC`（0.008。柔らかいランプでカチッという硬さにしない）/ `TAMB_JUDGE` と純関数 `tambourineFor(judge, tier)`。ランダム要素は持たず固定値テーブル（テストで固定できる）。再生は `playTambourine`（部分音はサイン波＋setTargetAtTime の exp 減衰、空気感と粒は長いノイズバッファ＋帯域フィルタ）。判定別: PERFECT peak 0.24・部分音12本・粒24個 / GREAT 0.19・10本・16個・減衰×1.35 / GOOD 0.13・7本・8個・減衰×1.7。tier ではピッチを上げず明るさ（7kHz 以上の部分音と空気感を tier ごとに +15%、上限 tier 4）だけ上げる。部分音の音量は合計振幅で正規化し `TAMB_PARTIAL_BOOST`（2.2）で持ち上げ（非整数倍音は位相が揃わないため）。**長押しの連打（HOLD_BLIP、8bit）・完走音（COMPLETE_BLIP）・失敗音・空タップ音（EMPTY_BLIP）は変更なし**（オーナー指示で据え置き）。旧 `HIT_BLIP` / `hitToneFor` は廃止し、`app:sound` の hit イベントの detail から frequency を外した（kind / judge / tier は不変）。聞こえ方の最終確認は実機（ヘッドレスでは音質を判定できない）。
   - **デバッグモード＋オートプレイを設定モーダルに追加**（オーナー指示）。ユーザー向け設定として実装し、?debug=1 のテスト用入口（src/debug.ts）とバージョン5回タップのパネルとは別物（保存キーは storage.ts 経由の `debugMode` / `autoplay`、どちらも既定オフ）。UI は歌詞表示の下: #debug-button（デバッグモード）と、オンのときだけ出る #autoplay-block 内の #autoplay-button。data 属性 `debugMode` / `autoplay` も出す。有効条件は両方オン（main.ts の startGame が `debugModeOn && autoplayOn` を game.start の第4引数へ渡す）。game.ts: loop がミス掃除より先に `autoPlay(nowMs)` で時刻の来たノーツを PERFECT 処理（タップ処理を `hitNote(note, judge, nowMs)` に共用化し、フラッシュ・波紋も出す）。長押しは頭を押したまま離す処理が入らないので、advanceHold が尾で完走させる（tick・完走音も通常どおり）。入力は onPointerDown（左上の中断を除く）と onKeyDown で無効化。結果は `GameResult.autoplay` で main.ts へ渡り、**ベストスコアに保存しない**（表示は保存済みベストのまま）。リザルトには #result-autoplay バッジ（金枠ピル）を出し、aria-live の結果文にも「（オートプレイ）」を足す。E2E で UI 操作からの有効化・コンボ/スコアの伸び・バッジ・ベスト不保存を確認する。
@@ -82,7 +86,7 @@
   - **記録のバックアップ機能を削除した**（オーナー判断「いらない」）。メニューの書き出し／読み込み UI、`src/backup.ts`、`storage.ts` の export/import、バックアップ読み込み後に合わせ直す `reloadSound` / `reloadVibrate`、関連する単体テスト・E2E・shots の backup 画面をすべて撤去。**テンプレート標準からの意図的な逸脱。再追加しない**（CLAUDE.md の「このアプリ固有の決まり」にも明記）。保存データの版番号（`SCHEMA_VERSION`）は `src/storage.ts` が持つよう移した。保存そのもの（ベストスコア・オフセット・効果音/振動）は従来どおり端末内のみ。
   - **設定ボタンをメニュー下部のフッターへ移動**（上の設定モーダルの項を参照）。モーダルの中身と開閉の挙動は不変。
 - 公開 URL: https://tanabata-soft.github.io/6tbherc3zg/（リポジトリ: tanabata-soft/6tbherc3zg、public）
-- 検証: `npm run verify` 全通過（単体テスト101件、うちホールド16件・譜面 v3 の整合検証18件・歌詞5件・ケージのパターン決定3件・音まわりはタンバリンのパラメータ検証と連打・空タップの検証を含む）、E2E 24件（23 passed＋長押し完走1件 flaky でリトライ通過。実時間テストの従来からの揺れ。この VM の全並行実行では長押し系が負荷で落ちることがあるが、直列実行と CI が正）、shots 15枚でゲーム画面（ホールド帯・歌詞3行）・game-combo（100コンボ・ghostrider の背景＋上部のセリフピル）・ホーム（尺表示 1:45）を目視確認済み（通常登場の treasure 背景でもノーツが埋もれないことも追加の一時撮影で確認）。設定モーダルはデバッグ ON 状態も一時撮影で確認（phone は全項目が収まり、SE はダイアログ内スクロールで「閉じる」まで届く）
+- 検証: `npm run verify` 全通過（単体テスト101件、うちホールド16件・譜面 v3 の整合検証18件・歌詞5件・ケージのパターン決定3件・音まわりはタンバリンのパラメータ検証と連打・空タップの検証を含む）、E2E 24件（22 passed＋長押し系2件 flaky でリトライ通過。実時間テストの従来からの揺れ。この VM の全並行実行では長押し系が負荷で落ちることがあるが、直列実行と CI が正）、shots 15枚でゲーム画面（ホールド帯・歌詞3行）・game-combo（100コンボ・ghostrider の背景がピークで完全に置き換わり、判定枠・ラインが明瞭＋上部のセリフピル）・ホーム（新タイトル「キソケイジビート」、尺表示 1:45）を目視確認済み（通常登場の treasure 背景のピークでも、暗幕の補正込みでノーツが埋もれないことも追加の一時撮影で確認）。設定モーダルはデバッグ ON 状態も一時撮影で確認（phone は全項目が収まり、SE はダイアログ内スクロールで「閉じる」まで届く）
 - 単体プレビュー: `dist-preview/preview.html`（約8.3MB）
 
 ## やりかけ

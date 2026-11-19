@@ -200,9 +200,14 @@ const cageLineIndexes: Record<CagePattern, number> = {
 };
 let cageHideTimer = 0;
 
-/** 登場の滞在時間（ms）。CSS のフェード（cage-fade）と game.ts の背景の滞在時間（CAGE_BG_DURATION_SEC）と合わせる */
-const CAGE_SHOW_MS = 1500;
-const CAGE_SHOW_BIG_MS = 1900;
+/**
+ * 登場の滞在時間（ms）。CSS のフェード（cage-fade）と game.ts の背景の滞在時間
+ * （CAGE_BG_DURATION_SEC）と合わせる。v1.8.6 で背景が完全に置き換わる形になり、
+ * 包絡（フェードイン 0.3秒 → キープ → フェードアウト 0.6秒）に合わせて延ばした:
+ * 通常は約2.9秒（キープ約2秒）、big は約3.6秒（キープ長め）。
+ */
+const CAGE_SHOW_MS = 2900;
+const CAGE_SHOW_BIG_MS = 3600;
 
 function showCage(combo: number, appearance: CageAppearance): void {
   const pop = $('cage-pop');
