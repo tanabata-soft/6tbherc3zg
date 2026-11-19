@@ -2,16 +2,20 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.9.1
+更新: 2026-11-19・版 v1.9.2
 
 ## 今の状態
 
-- アプリ名は『キソケイジビート』（副題: ニコラスケイジと木曽と私）。v1.8.6 で『木曽ケイジビート』から、v1.2.0 で『木曽リズムゲーム』から、表示名だけを変更した。
+- アプリ名は『キソ・ケイジ・ビート』（副題: ニコラスケイジと木曽と私）。v1.9.2 で『キソケイジビート』から、v1.8.6 で『木曽ケイジビート』から、v1.2.0 で『木曽リズムゲーム』から、表示名だけを変更した。
   - **アプリID（package.json の `name` = `kiso-rhythm-game`）は据え置き**。表示名を変えても ID は変えないこと（保存データのキー接頭辞・復旧範囲・キャッシュが ID 由来で、変えると利用者の記録が消える）。
   - 表示名の正本は `vite.config.ts` の `APP_NAME` と `index.html`（title / apple-mobile-web-app-title / ブランド題字）の2か所。check:content が一致を検査する。
 - 曲: 『石畳のハイウェイ』(BPM 135) / 『Kiso Night Silhouette』(BPM 150)。**v1.6.0 から音ゲー用ショート編集**（石畳 104.8秒 / Kiso Night 127.7秒。全長版は `assets-full/` に保管、編集手順は `assets-full/README.md`）
   - 譜面は `scripts/generate-charts.py`（librosa）で生成（v4方式＝両親指前提＋FEVER 密度上げ、下記）。ノーツ数: 石畳 146/287/370、Kiso Night 202/384/498（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96]、Kiso Night [44,67][96,127]（秒、編集後のタイムライン）
+- v1.9.2 の変更:
+  - **遅延チェック機能を追加**（タイミングのずれを実測してオフセットに反映する）。入口は設定モーダルの「タイミング調整（オフセット）」の下にある「遅延チェック」ボタンで、専用ダイアログ（`index.html` の `#latency-dialog`、設定の上に重ねて開く）が開く。方式: 60 BPM＝1000ms 間隔の拍を、クリック音（`src/sound.ts` の `playLatencyClickAt`、2000Hz 矩形波・peak 0.18。**計測が前提なので効果音のオン/オフ設定にかかわらず鳴らす**。`app:sound` の kind は `latency`）＋丸のフラッシュで提示し、ユーザーが大きな「タップ」ボタンを拍に合わせて押す。拍は AudioContext 時刻基準で先行スケジュール（lookahead 0.12 秒・25ms タイマー、開始前に 1.0 秒のリードイン。実装は `src/latency.ts` の `LatencyCheck`）。計算は `src/logic.ts` の純関数（`latencyDeltas` / `latencyStats` / `filterTapTimes`、定数 `LATENCY_BPM` 60 / `LATENCY_TAP_COUNT` 10 / `LATENCY_DROP_COUNT` 2 / `LATENCY_MIN_TAP_GAP_MS` 200）: 前のタップから 200ms 未満のタップは二度押しとして除外し、各タップと最寄りの拍との差（＋＝タップが遅い）を出し、最初の 2 回を練習として除いた残りで平均と標準偏差を表示する。**符号の向き**: ゲームのオフセットは判定時刻を +offsetMs ずらす定義で、タップが遅れる人（平均が＋）はオフセットを＋にすると打ち消せる（手動調整の注記「ノーツが遅れて感じる → ＋」と一致。符号規約の単体テストあり）。「オフセットに反映」で `setOffset(平均の四捨五入)`（既存のクランプ ±200ms・10ms 刻みと保存をそのまま使う）。反映せずに閉じた場合は何も変えない。E2E で反映フローとキャンセル（閉じたら変わらない）フローの両方を確認する。
+  - **アプリ名を『キソ・ケイジ・ビート』に変更**（オーナー指示。中点入りの表記。表示名のみ）。適用箇所は v1.8.6 の改名と同じ一式: `vite.config.ts` の `APP_NAME`（manifest の name / short_name に伝播）、index.html の `<title>` / apple-mobile-web-app-title / description / 題字 h1、README 見出し、e2e の見出し確認、CLAUDE.md・本書・PROGRESS.md の現行表記（履歴の節は旧名のまま）。サブタイトル「ニコラスケイジと木曽と私」は不変。**アプリID（package.json の `name`）・保存キーは据え置き**。
+  - 譜面・楽曲・音は変更なし。
 - v1.9.1 の変更:
   - **バックグラウンド復帰後にタッチが効かなくなる不具合を修正**（オーナー実機報告: 復帰後に READY 表示のまま固まる）。原因: ①`start()` が非同期（loadBuffer / resumeAudio の await）で、その合間にバックグラウンドへ回ると `playing` がまだ立っておらず `abort()` が素通りし、その後 start が完了して止まった AudioContext の時計のまま READY で凍っていた ②復帰時に AudioContext を resume する処理がなかった ③裏にいる間に pointerup / keyup を取りこぼすと `pointerLanes` / `keyLanes` に押下状態が残り、保持中ホールドも 'holding' のまま残った。対策（すべて `src/game.ts`）: `startSession`（世代番号）を導入し、`abort()` は演奏中でなくても世代を進めて進行中の start を取り消す／start 完了時点で世代が古いか画面が hidden なら演奏を作らずメニューへ戻す／`resetInput()`（ポインタ・キーの押下状態を消し、保持中ホールドは releaseHold で猶予へ移して連打音を止める）を hidden・pagehide・blur で呼ぶ／visible・focus で `resumeAudio()`／`lostpointercapture` も pointerup と同じ処理／演奏ループで「前面なのに AudioContext が running でない」状態を壁時計で 1 秒に 1 回検出して resume を試みる。E2E に模擬テスト（visibilityState を差し替えて hidden→visible を再現し、再開後のキー入力で空タップ音が鳴ること）を追加。**本物のバックグラウンド遷移・割り込みはヘッドレスで再現できないため、最終確認は iPhone 実機**（次にやること 1）。
   - **通常ヒット音を F案（8bit）に戻した**（オーナー指示「タッチオン音は元に戻して」）。v1.8.5 のタンバリン（E案）は不採用: `TAMB_*` / `tambourineFor` / `playTambourine` を削除し、v1.8.4 以前の `HIT_BLIP` / `hitToneFor` を復元（矩形波 2 音 1568Hz→2093Hz、PERFECT 0.22 / GREAT 0.17 / GOOD は 1 音目のみ 1397Hz・0.12、tier で +1 半音/tier・上限 +4、`app:sound` の hit detail に frequency が戻った）。単体テストも F案仕様に戻した。長押し連打・完走・失敗・空タップの音は変更なし。v1.8.5 の節のタンバリンの記述は履歴として残す（現行ではない）。
@@ -101,7 +105,7 @@
   - **記録のバックアップ機能を削除した**（オーナー判断「いらない」）。メニューの書き出し／読み込み UI、`src/backup.ts`、`storage.ts` の export/import、バックアップ読み込み後に合わせ直す `reloadSound` / `reloadVibrate`、関連する単体テスト・E2E・shots の backup 画面をすべて撤去。**テンプレート標準からの意図的な逸脱。再追加しない**（CLAUDE.md の「このアプリ固有の決まり」にも明記）。保存データの版番号（`SCHEMA_VERSION`）は `src/storage.ts` が持つよう移した。保存そのもの（ベストスコア・オフセット・効果音/振動）は従来どおり端末内のみ。
   - **設定ボタンをメニュー下部のフッターへ移動**（上の設定モーダルの項を参照）。モーダルの中身と開閉の挙動は不変。
 - 公開 URL: https://tanabata-soft.github.io/6tbherc3zg/（リポジトリ: tanabata-soft/6tbherc3zg、public）
-- 検証: v1.9.1 では lint・build・check:dist・check:content は通過。単体テストは 100 件中 99 件通過で、残る 1 件（tests/layer-rules の ESLint 起動テスト）は VM の高負荷時に 5 秒タイムアウトする既存の揺れ（変更前の v1.9.0 ツリーでも同じ失敗を再現確認済み。単独実行では通過。CI で最終確認）。E2E は 25 件全通過（4173 が別ワークツリーのプレビュー使用中のため、ポートだけ 4175 に変えた一時設定で実施。新規のバックグラウンド復帰の模擬テストを含む）。shots 15枚＋Kiso Night の一時撮影で、両曲の演奏画面のジャケットのタイトルが全体収まること、game-combo（100コンボ・ghostrider の背景ピーク）・ホームの崩れがないことを目視確認済み
+- 検証: v1.9.2 では verify 全通過（lint・型・build・check:dist・check:content、単体テスト 106 件全通過。遅延チェックの純関数テストを含む）。E2E は 27 件全通過（遅延チェックの反映・キャンセルの新規 2 件を含む。ポート 4173 は空きだったため標準設定で実施）。shots 18枚でホーム（新タイトル「キソ・ケイジ・ビート」）・設定モーダル（遅延チェックボタンの配置）・遅延チェック画面（phone / SE とも崩れなし）を目視確認済み
 - 単体プレビュー: `dist-preview/preview.html`（約8.3MB）
 
 ## やりかけ
@@ -110,7 +114,7 @@
 
 ## 次にやること(優先順)
 
-1. **iPhone 実機で確認する**: ①v1.9.1 のバックグラウンド復帰（演奏中・READY 中にホームへ戻る／画面ロック／着信などを挟んで復帰し、固まらず遊べるか。ヘッドレスでは本物の遷移を再現できないため最優先）②音が出るか（v1.2.0 の音声対策の最終確認。マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）③v1.9.1 で戻した F案ヒット音の聞こえ方 ④v1.8.2 の文字選択禁止（長押しでコールアウトや選択が出ないか）。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.3.0）も見る。振動は Android 実機で確認する
+1. **iPhone 実機で確認する**: ①v1.9.1 のバックグラウンド復帰（演奏中・READY 中にホームへ戻る／画面ロック／着信などを挟んで復帰し、固まらず遊べるか。ヘッドレスでは本物の遷移を再現できないため最優先）②音が出るか（v1.2.0 の音声対策の最終確認。マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）③v1.9.1 で戻した F案ヒット音の聞こえ方 ④v1.8.2 の文字選択禁止（長押しでコールアウトや選択が出ないか）⑤v1.9.2 の遅延チェック（拍の音と光に合わせてタップし、測った値が体感に合うか。Bluetooth イヤホン使用時も）。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.3.0）も見る。振動は Android 実機で確認する
 2. 遊んだ感触で譜面の密度や FEVER 区間を調整したくなったら、`scripts/generate-charts.py` の SONGS の fever（区間）や定数（HARD_CAP / NORMAL_CAP / EASY_CAP、パターンの確率）を変えて再生成し、版を上げて公開する（生成方式は v4＝両親指前提。固定間隔グリッドに戻さない。両親指制約は `scripts/check-two-thumb.py` が正本で、生成時に自動検証される。設計の根拠は docs/CHART-DESIGN.md）。再生成したら `scripts/verify-autoplay-full.mjs` の全通し確認も回すこと
 3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_BLIP・hitToneFor（通常タップの F案 8bit 音。v1.9.1 でタンバリンから戻した）/ HOLD_BLIP・HOLD_STREAM（長押しの連打）/ EMPTY_BLIP（空タップ音）/ COMPLETE_BLIP / FAIL_BLIP、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、ケージのパターン・ズーム種別は `src/logic.ts` の CAGE_PATTERN_ROTATION / CAGE_BIG_PATTERNS / CAGE_PATTERN_ZOOM、背景の濃さ・ズーム量・滞在時間は `src/game.ts` の CAGE_BG_* 定数、セリフは `src/main.ts` の CAGE_PATTERN_LINES、滞在時間は `src/main.ts` の CAGE_SHOW_MS と `src/style.css` の cage-fade の duration も合わせる、`src/game.ts` の演出の定数（RING_LIFE など）を変える
 
