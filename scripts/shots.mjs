@@ -54,6 +54,38 @@ const SCREENS = [
       await page.waitForTimeout(1000);
     },
   },
+  {
+    // 曲選択カルーセル: 3曲目（gospel）を中央にした状態。
+    // ドットで直接選ぶ（前の画面で選んだ曲が残っていても確実に切り替わる）
+    name: 'home-gospel',
+    open: async (page) => {
+      await page.click('.carousel-dot[data-song="gospel"]');
+      await page.waitForFunction("document.body.dataset.song === 'gospel'");
+      // スクロールが中央で落ち着くまで待つ
+      await page.waitForTimeout(600);
+    },
+  },
+  {
+    // 曲選択カルーセル: 4曲目（kira）を中央にした状態
+    name: 'home-kira',
+    open: async (page) => {
+      await page.click('.carousel-dot[data-song="kira"]');
+      await page.waitForFunction("document.body.dataset.song === 'kira'");
+      await page.waitForTimeout(600);
+    },
+  },
+  {
+    // 新曲（gospel）の演奏画面: 背景ジャケットと歌詞表示の確認用
+    name: 'game-gospel',
+    open: async (page) => {
+      await page.click('.carousel-dot[data-song="gospel"]');
+      await page.waitForFunction("document.body.dataset.song === 'gospel'");
+      await page.click('#start-button');
+      await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
+      // READY（2秒）＋曲の約5.3秒地点（game 画面と同じ頃合い）
+      await page.waitForTimeout(7300);
+    },
+  },
 ];
 
 /** 撮る大きさ。dark はダークモード（端末設定に従う配色のアプリで確認する）。 */

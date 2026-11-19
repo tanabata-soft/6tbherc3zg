@@ -18,10 +18,10 @@ test('メニューが表示され、曲と難易度を選べる', async ({ page 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'キソ・ケイジ・ビート' })).toBeVisible();
   await expect(page.getByText('ニコラスケイジと木曽と私')).toBeVisible();
-  await expect(page.locator('.song-card')).toHaveCount(2);
+  await expect(page.locator('.carousel-slide')).toHaveCount(4);
   await expect(page.locator('body')).toHaveAttribute('data-song', 'highway');
 
-  await page.locator('.song-card[data-song="night"]').click();
+  await page.locator('.carousel-slide[data-song="night"]').click();
   await expect(page.locator('body')).toHaveAttribute('data-song', 'night');
   await page.getByRole('button', { name: 'むずかしい' }).click();
   await expect(page.locator('body')).toHaveAttribute('data-difficulty', 'hard');
@@ -132,16 +132,49 @@ test('ゲームが始まり、Canvas が表示され、左上タップでメニ�
   await expect(page.locator('body')).toHaveAttribute('data-game', 'menu');
 });
 
-test('ヒーロー表示が、選んだ曲に切り替わる', async ({ page }) => {
+test('カルーセルの表示が、選んだ曲に切り替わる', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('#hero-title')).toHaveText('石畳のハイウェイ');
-  await expect(page.locator('#hero-jacket')).toHaveAttribute('data-song', 'highway');
-  await expect(page.locator('#hero-bpm')).toContainText('BPM');
+  const active = page.locator('.carousel-slide[data-active="true"]');
+  await expect(active).toHaveAttribute('data-song', 'highway');
+  await expect(active.locator('.slide-title')).toHaveText('石畳のハイウェイ');
+  await expect(active.locator('.slide-chips')).toContainText('BPM');
 
-  await page.locator('.song-card[data-song="night"]').click();
-  await expect(page.locator('#hero-title')).toHaveText('Kiso Night Silhouette');
-  await expect(page.locator('#hero-jacket')).toHaveAttribute('data-song', 'night');
-  await expect(page.locator('#hero-album')).toHaveText('Silver Screen Ascent');
+  await page.locator('.carousel-slide[data-song="night"]').click();
+  await expect(page.locator('.carousel-slide[data-active="true"]')).toHaveAttribute('data-song', 'night');
+  await expect(page.locator('.carousel-slide[data-song="night"] .slide-title')).toHaveText('Kiso Night Silhouette');
+  await expect(page.locator('.carousel-slide[data-song="night"] .slide-album')).toHaveText('Silver Screen Ascent');
+});
+
+test('カルーセルをボタン・ドット・スクロールで切り替えて、その曲で始められる', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('body')).toHaveAttribute('data-song', 'highway');
+
+  // 前後ボタンで切り替える
+  await page.locator('#carousel-next').click();
+  await expect(page.locator('body')).toHaveAttribute('data-song', 'night');
+  await page.locator('#carousel-next').click();
+  await expect(page.locator('body')).toHaveAttribute('data-song', 'gospel');
+  await page.locator('#carousel-prev').click();
+  await expect(page.locator('body')).toHaveAttribute('data-song', 'night');
+
+  // ドットで末尾の曲へ飛ぶ
+  await page.locator('.carousel-dot[data-song="kira"]').click();
+  await expect(page.locator('body')).toHaveAttribute('data-song', 'kira');
+  await expect(page.locator('.carousel-slide[data-active="true"]')).toHaveAttribute('data-song', 'kira');
+  await expect(page.locator('.carousel-dot[data-song="kira"]')).toHaveAttribute('aria-current', 'true');
+
+  // スワイプ相当: ビューポートをスクロールすると、中央のスライドが選択される
+  await page.locator('#carousel-viewport').evaluate((el) => {
+    const slide = el.querySelector('.carousel-slide[data-song="gospel"]') as HTMLElement;
+    el.scrollTo({ left: slide.offsetLeft - (el.clientWidth - slide.clientWidth) / 2, behavior: 'auto' });
+  });
+  await expect(page.locator('body')).toHaveAttribute('data-song', 'gospel', { timeout: 5000 });
+
+  // 切り替えた曲（gospel）で演奏を始められる
+  await page.getByRole('button', { name: 'スタート' }).click();
+  await expect(page.locator('#game-screen')).toBeVisible();
+  await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+  await expect(page.locator('body')).toHaveAttribute('data-song', 'gospel');
 });
 
 test('効果音・振動・歌詞表示のオン/オフが切り替わり、保存される', async ({ page }) => {

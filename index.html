@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#0b0e1d" />
     <meta name="color-scheme" content="dark only" />
     <meta name="app-id" content="__APP_ID__" />
-    <meta name="description" content="キソ・ケイジ・ビート ― ニコラスケイジと木曽と私。木曽を歌う2曲で遊ぶ、4レーンのリズムゲーム" />
+    <meta name="description" content="キソ・ケイジ・ビート ― ニコラスケイジと木曽と私。木曽を歌う4曲で遊ぶ、4レーンのリズムゲーム" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <!-- iPhone のホーム画面アプリ: ステータスバーは不透明にする（暗い固定・端末設定に従う: black / 明るい固定: default）。
@@ -30,20 +30,16 @@
           <p class="brand-sub">ニコラスケイジと木曽と私</p>
         </header>
 
-        <!-- 選択中の曲を主役にするヒーロー表示 -->
-        <section class="hero" aria-label="選択中の曲">
-          <img id="hero-jacket" class="hero-jacket" alt="">
-          <div class="hero-overlay">
-            <h2 id="hero-title" class="hero-title"></h2>
-            <p class="hero-chips">
-              <span class="chip" id="hero-album"></span>
-              <span class="chip" id="hero-bpm"></span>
-              <span class="chip" id="hero-length"></span>
-            </p>
+        <!-- 曲選択はジャケット主役のカルーセル（左右スワイプ／スクロールで切り替え）。
+             スライドは src/main.ts が曲データから組み立てる -->
+        <section class="carousel" aria-label="曲を選ぶ">
+          <div id="carousel-viewport" class="carousel-viewport">
+            <div id="carousel-track" class="carousel-track"></div>
           </div>
+          <button id="carousel-prev" type="button" class="carousel-nav carousel-prev" aria-label="前の曲">‹</button>
+          <button id="carousel-next" type="button" class="carousel-nav carousel-next" aria-label="次の曲">›</button>
+          <div id="carousel-dots" class="carousel-dots" role="group" aria-label="曲の位置"></div>
         </section>
-
-        <div id="song-list" class="song-list" role="group" aria-label="曲を選ぶ"></div>
 
         <div class="row diff-row" id="diff-row" role="group" aria-label="難易度">
           <button type="button" class="opt" data-diff="easy" aria-pressed="true">かんたん</button>

@@ -1,4 +1,4 @@
-// オートプレイ全通し確認: 設定のデバッグモード＋オートプレイで両曲・hard を
+// オートプレイ全通し確認: 設定のデバッグモード＋オートプレイで全曲・hard を
 // 実時間で最後まで再生し、フルコンボ（MISS 0・最大コンボ＝全ノーツ数）に
 // 到達することを確かめる。譜面を再生成したときの完走可能性チェック用。
 // 1曲あたり実時間（約2分）がかかるので、通常の E2E（npm run test:e2e）には
@@ -12,6 +12,8 @@ const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import
 const SONGS = [
   { id: 'highway', label: '石畳のハイウェイ' },
   { id: 'night', label: 'Kiso Night Silhouette' },
+  { id: 'gospel', label: '谷底にも朝が来る' },
+  { id: 'kira', label: 'キラキラ木曽旅' },
 ];
 
 const server = await preview({ preview: { port: 4176, strictPort: true }, logLevel: 'warn' });
@@ -44,7 +46,7 @@ try {
   for (const song of SONGS) {
     const total = charts[song.id].charts.hard.length;
     const durationMs = charts[song.id].durationMs;
-    await page.locator(`.song-card[data-song="${song.id}"]`).click();
+    await page.locator(`.carousel-slide[data-song="${song.id}"]`).click();
     await page.getByRole('button', { name: 'スタート' }).click();
     await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
     const t0 = Date.now();
@@ -77,4 +79,4 @@ if (failed) {
   console.error('verify-autoplay-full: 失敗');
   process.exit(1);
 }
-console.log('verify-autoplay-full: 両曲 hard をオートプレイでフルコンボ完走');
+console.log('verify-autoplay-full: 全曲 hard をオートプレイでフルコンボ完走');

@@ -3,7 +3,7 @@
 //   判定 PERFECT ±50ms / GREAT ±100ms / GOOD ±160ms、スコア 1000/700/400、FEVER中は2倍
 //   精度 = (PERFECT + GREAT×0.7 + GOOD×0.4) / 全ノーツ ×100、ランク S≥95 / A≥85 / B≥70 / C
 
-export type SongId = 'highway' | 'night';
+export type SongId = 'highway' | 'night' | 'gospel' | 'kira';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 export type Judge = 'perfect' | 'great' | 'good' | 'miss';
 

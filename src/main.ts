@@ -54,30 +54,116 @@ function show(next: Screen): void {
   setData('screen', next);
 }
 
-// ---- メニューの組み立て ----
-const songList = $('song-list');
-const songButtons = new Map<SongId, HTMLButtonElement>();
+// ---- メニューの組み立て（曲選択カルーセル） ----
+// ジャケットを主役にした左右スワイプ式（v1.9.3）。ビューポートは横スクロール＋
+// スクロールスナップで、中央に来たスライドが選択中の曲になる。スライドの
+// ジャケットは縦長の切り抜きで、絵の中の曲タイトルができるだけ収まる位置を
+// 曲ごとに CSS（.carousel-slide[data-song] img）で指定する。
+const carouselViewport = $<HTMLDivElement>('carousel-viewport');
+const carouselTrack = $<HTMLDivElement>('carousel-track');
+const carouselDots = $<HTMLDivElement>('carousel-dots');
+const slides = new Map<SongId, HTMLButtonElement>();
+const dotButtons = new Map<SongId, HTMLButtonElement>();
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
 for (const entry of SONGS) {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'song-card';
+  b.className = 'carousel-slide';
   b.dataset.song = entry.id;
   b.setAttribute('aria-label', entry.data.title);
   const img = document.createElement('img');
   img.src = entry.jacketUrl;
   img.alt = '';
+  img.draggable = false;
+  const overlay = document.createElement('span');
+  overlay.className = 'slide-overlay';
   const title = document.createElement('span');
-  title.className = 'song-thumb-title';
+  title.className = 'slide-title';
   title.textContent = entry.data.title;
-  b.append(img, title);
-  b.addEventListener('click', () => {
-    selectedSong = entry.id;
-    save('song', selectedSong);
-    renderMenu();
-  });
-  songList.append(b);
-  songButtons.set(entry.id, b);
+  const chips = document.createElement('span');
+  chips.className = 'slide-chips';
+  const album = document.createElement('span');
+  album.className = 'chip slide-album';
+  album.textContent = entry.album;
+  const bpm = document.createElement('span');
+  bpm.className = 'chip';
+  bpm.textContent = `BPM ${Math.round(entry.data.bpm)}`;
+  const sec = Math.round(entry.data.durationMs / 1000);
+  const len = document.createElement('span');
+  len.className = 'chip';
+  len.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  chips.append(album, bpm, len);
+  overlay.append(title, chips);
+  b.append(img, overlay);
+  b.addEventListener('click', () => selectSong(entry.id, true));
+  carouselTrack.append(b);
+  slides.set(entry.id, b);
+
+  const d = document.createElement('button');
+  d.type = 'button';
+  d.className = 'carousel-dot';
+  d.dataset.song = entry.id;
+  d.setAttribute('aria-label', `${entry.data.title}を選ぶ`);
+  d.addEventListener('click', () => selectSong(entry.id, true));
+  carouselDots.append(d);
+  dotButtons.set(entry.id, d);
 }
+
+const slideIndex = (id: SongId): number => SONGS.findIndex((s) => s.id === id);
+
+/** スライドをビューポートの中央へスクロールする */
+function scrollToSong(id: SongId, smooth: boolean): void {
+  const slide = slides.get(id);
+  if (!slide) return;
+  const left = slide.offsetLeft - (carouselViewport.clientWidth - slide.clientWidth) / 2;
+  carouselViewport.scrollTo({ left, behavior: smooth && !reduceMotion.matches ? 'smooth' : 'auto' });
+}
+
+/** 曲を選ぶ。選択の保存と表示の更新をして、必要なら中央へスクロールする */
+function selectSong(id: SongId, scroll: boolean): void {
+  if (!SONGS.some((s) => s.id === id)) return;
+  selectedSong = id;
+  save('song', selectedSong);
+  renderMenu();
+  if (scroll) scrollToSong(id, true);
+}
+
+function stepSong(dir: number): void {
+  const i = Math.min(SONGS.length - 1, Math.max(0, slideIndex(selectedSong) + dir));
+  selectSong(SONGS[i].id, true);
+}
+$('carousel-prev').addEventListener('click', () => stepSong(-1));
+$('carousel-next').addEventListener('click', () => stepSong(1));
+
+// スワイプ（スクロール）が落ち着いたら、中央のスライドを選択中の曲に合わせる
+let scrollSettleTimer = 0;
+carouselViewport.addEventListener(
+  'scroll',
+  () => {
+    window.clearTimeout(scrollSettleTimer);
+    scrollSettleTimer = window.setTimeout(() => {
+      const center = carouselViewport.scrollLeft + carouselViewport.clientWidth / 2;
+      let best = selectedSong;
+      let bestDist = Infinity;
+      for (const entry of SONGS) {
+        const slide = slides.get(entry.id);
+        if (!slide) continue;
+        const d = Math.abs(slide.offsetLeft + slide.clientWidth / 2 - center);
+        if (d < bestDist) {
+          bestDist = d;
+          best = entry.id;
+        }
+      }
+      if (best !== selectedSong) {
+        selectedSong = best;
+        save('song', selectedSong);
+        renderMenu();
+      }
+    }, 120);
+  },
+  { passive: true },
+);
 
 const diffButtons = [...document.querySelectorAll<HTMLButtonElement>('#diff-row [data-diff]')];
 for (const b of diffButtons) {
@@ -96,18 +182,17 @@ function renderToggle(id: string, on: boolean): void {
 }
 
 function renderMenu(): void {
-  for (const [id, b] of songButtons) b.setAttribute('aria-pressed', String(id === selectedSong));
+  for (const [id, b] of slides) {
+    b.setAttribute('aria-pressed', String(id === selectedSong));
+    b.dataset.active = String(id === selectedSong);
+  }
+  for (const [id, d] of dotButtons) {
+    if (id === selectedSong) d.setAttribute('aria-current', 'true');
+    else d.removeAttribute('aria-current');
+  }
+  $<HTMLButtonElement>('carousel-prev').disabled = slideIndex(selectedSong) <= 0;
+  $<HTMLButtonElement>('carousel-next').disabled = slideIndex(selectedSong) >= SONGS.length - 1;
   for (const b of diffButtons) b.setAttribute('aria-pressed', String(b.dataset.diff === selectedDiff));
-  // ヒーロー表示を選択中の曲に合わせる（ジャケットの切り取り位置は曲ごとに CSS で指定）
-  const entry = songById(selectedSong);
-  const heroJacket = $<HTMLImageElement>('hero-jacket');
-  heroJacket.src = entry.jacketUrl;
-  heroJacket.dataset.song = entry.id;
-  $('hero-title').textContent = entry.data.title;
-  $('hero-album').textContent = entry.album;
-  $('hero-bpm').textContent = `BPM ${Math.round(entry.data.bpm)}`;
-  const sec = Math.round(entry.data.durationMs / 1000);
-  $('hero-length').textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
   $('menu-best').textContent = String(bestOf(selectedSong, selectedDiff));
   $('offset-value').textContent = `${offsetMs > 0 ? '+' : ''}${offsetMs}ms`;
   renderToggle('sound-button', isSoundOn());
@@ -442,7 +527,10 @@ exposeTestApi({
     audioState: audioState(),
   }),
   setState: (patch) => {
-    if (typeof patch.song === 'string' && SONGS.some((s) => s.id === patch.song)) selectedSong = patch.song as SongId;
+    if (typeof patch.song === 'string' && SONGS.some((s) => s.id === patch.song)) {
+      selectedSong = patch.song as SongId;
+      scrollToSong(selectedSong, false);
+    }
     if (typeof patch.difficulty === 'string' && patch.difficulty in DIFFICULTIES) selectedDiff = patch.difficulty as Difficulty;
     if (typeof patch.offset === 'number') offsetMs = clampOffset(patch.offset);
     if (typeof patch.lyrics === 'boolean') {
@@ -470,6 +558,8 @@ setupUpdateBanner($('update-banner'), $<HTMLButtonElement>('update-button'), $('
 setupInstallGuide($<HTMLButtonElement>('install-open'), $<HTMLDialogElement>('install-dialog'), $<HTMLButtonElement>('install-now'));
 show('menu');
 renderMenu();
+// 起動時は、保存されていた選択曲が中央に来る位置から始める
+scrollToSong(selectedSong, false);
 
 // ここまで来たら起動成功（public/boot.js が見ている）
 window.__appStarted = true;

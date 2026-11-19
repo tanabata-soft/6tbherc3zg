@@ -5,8 +5,12 @@ import raw from './data/charts.json';
 import lyricsRaw from './data/lyrics.json';
 import highwayAudio from './assets/highway.mp3';
 import nightAudio from './assets/night.mp3';
+import gospelAudio from './assets/gospel.mp3';
+import kiraAudio from './assets/kira.mp3';
 import highwayJacket from './assets/highway.jpg';
 import nightJacket from './assets/night.jpg';
+import gospelJacket from './assets/gospel.jpg';
+import kiraJacket from './assets/kira.jpg';
 
 export interface SongEntry {
   id: SongId;
@@ -43,6 +47,25 @@ export const SONGS: SongEntry[] = [
     jacketUrl: nightJacket,
     album: 'Silver Screen Ascent',
     genre: '90s J-Pop / Eurobeat',
+  },
+  {
+    // v1.9.3 で追加: 単体HTML版に収録されていた曲。音源・ジャケット・歌詞は同HTMLから抽出
+    id: 'gospel',
+    data: songs.gospel,
+    lyrics: lyrics.gospel,
+    audioUrl: gospelAudio,
+    jacketUrl: gospelJacket,
+    album: '谷底のハレルヤ',
+    genre: 'Gospel',
+  },
+  {
+    id: 'kira',
+    data: songs.kira,
+    lyrics: lyrics.kira,
+    audioUrl: kiraAudio,
+    jacketUrl: kiraJacket,
+    album: 'After the Last Bus',
+    genre: 'Synth Pop',
   },
 ];
 

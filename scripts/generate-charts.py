@@ -78,6 +78,22 @@ SONGS = {
         # 編集版（127.7秒）: サビ「Kono tokimeki wa nani〜」の繰り返し区間（字幕）と RMS 盛り上がりの一致区間（1番・2番のサビ）
         "fever": [[44, 67], [96, 127]],
     },
+    # v1.9.3 で追加: 単体HTML版に収録されていた2曲。音源は同HTMLから抽出し、
+    # v1.6.0 と同じ方針でショート編集した（全長版は assets-full/、詳細は同 README）。
+    "gospel": {
+        "title": "谷底にも朝が来る",
+        "audio": "src/assets/gospel.mp3",
+        # 編集版（125.5秒）: サビ「ニコラス・ケイジと 木曽と私〜谷底にも 朝が来る」の区間（字幕 99.9〜124.3秒）と RMS 盛り上がりの一致区間
+        "fever": [[100, 124]],
+    },
+    "kira": {
+        "title": "キラキラ木曽旅",
+        "audio": "src/assets/kira.mp3",
+        # 編集版（118.2秒）: サビ「ニコラス・ケイジと 木曽と私〜Tonight we walk, 木曽川沿い」の区間（字幕 64.1〜90.4秒）と RMS 盛り上がりの一致区間
+        "fever": [[64, 90]],
+        # 音の強弱が均一で、通常ゲートでは同時押しが5組しか立たなかったため下げる（16で8組＝他曲並み）
+        "chord_gate_drop": 16,
+    },
 }
 
 START_MS = 2000  # 最初のノーツはイントロ後
@@ -792,7 +808,12 @@ def process_song(song_id, meta, y, sr):
         s["fever"] = any(f0 <= s["time"] < f1 for f0, f1 in fever)
     slot_map = {(s["beat"], s["sub"]): s for s in playable}
     svals = np.array([s["strength"] for s in playable])
-    thr = {p: float(np.percentile(svals, p)) for p in (12, 25, 45, 50, 65, 75, 80, 84, 93)}
+    # 同時押しのゲートだけ、曲別に下げられるようにする（chord_gate_drop。
+    # 音の強弱の差が小さい曲では、相対ゲートのままだと同時押しが極端に
+    # 少なくなるため。既定 0 = 従来どおりで、他曲の譜面は変わらない）
+    chord_drop = int(meta.get("chord_gate_drop", 0))
+    pcts = {12, 25, 45, 50, 65, 75, 80, 84, 93} | {p - chord_drop for p in (75, 80, 84)}
+    thr = {p: float(np.percentile(svals, p)) for p in sorted(pcts)}
 
     # フレーズ分割
     bar_start_time = {b: float(ext_beats[b * 4]) for b in energies if b * 4 < len(ext_beats)}
@@ -874,9 +895,9 @@ def process_song(song_id, meta, y, sr):
     chord_times = set()
     chord_ids = set()  # 同時押しのペアを構成するノーツ（生成後の修復で優先的に残す）
     for bar, head in sorted(head_notes.items()):
-        strong_fever = head["fever"] and head["strength"] >= thr[84]
-        climax = bar in climax_bars and head["strength"] >= thr[80]
-        chorus_start = bar in chorus_first_bars and head["fever"] and head["strength"] >= thr[75]
+        strong_fever = head["fever"] and head["strength"] >= thr[84 - chord_drop]
+        climax = bar in climax_bars and head["strength"] >= thr[80 - chord_drop]
+        chorus_start = bar in chorus_first_bars and head["fever"] and head["strength"] >= thr[75 - chord_drop]
         if not (strong_fever or climax or chorus_start):
             continue
         slot = slot_map.get((head["beat"], 0))

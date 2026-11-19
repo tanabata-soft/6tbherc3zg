@@ -45,8 +45,8 @@ describe('歌詞データ（lyrics.json）の整合', () => {
     { durationMs: number }
   >;
 
-  it('両曲とも行があり、昇順で、尺の範囲内にある', () => {
-    for (const song of ['highway', 'night']) {
+  it('全曲とも行があり、昇順で、尺の範囲内にある', () => {
+    for (const song of ['highway', 'night', 'gospel', 'kira']) {
       const lines = raw[song];
       expect(lines.length).toBeGreaterThan(10);
       const duration = charts[song].durationMs;
@@ -62,8 +62,10 @@ describe('歌詞データ（lyrics.json）の整合', () => {
     }
   });
 
-  it('抽出結果の行数（highway 18行 / night 36行）', () => {
+  it('抽出結果の行数（highway 18行 / night 36行 / gospel 15行 / kira 23行）', () => {
     expect(raw.highway).toHaveLength(18);
     expect(raw.night).toHaveLength(36);
+    expect(raw.gospel).toHaveLength(15);
+    expect(raw.kira).toHaveLength(23);
   });
 });
