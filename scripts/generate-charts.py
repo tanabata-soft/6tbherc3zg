@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""譜面生成 v3: src/assets/*.mp3 を解析して src/data/charts.json を作る。
+"""譜面生成 v4: src/assets/*.mp3 を解析して src/data/charts.json を作る。
+
+v4 の変更点（オーナー指示「基本両手（両親指）でやることを前提にやりやすい譜面に」。
+根拠は docs/CHART-DESIGN.md の「両親指前提（譜面 v4）」節）:
+- レーン 0・1 を左親指、2・3 を右親指が受け持つ前提で、両親指のハード制約を
+  生成に組み込んだ（制約の正本は scripts/check-two-thumb.py）:
+  C1 同時押しは左右に分かれるペアだけ（同側ペア禁止）。
+  C2 長押し中は拘束側のノーツを置かない（帯の中は反対側だけ。同時押しの
+     ある時刻をまたぐ長押しも置かない）。同時ホールドは同側同士で重ねない。
+  C3a 16分の連なりで同側3連を作らない（トリルは左右交互に変更、wave16 の
+     形も同側3連が出ない形に変更。フィット時の罰金＋生成後の修復でも担保）。
+  C3b 同側2レーン交互（片手トリル）は8分以下の速さで4連まで
+     （フィット時の罰金＋生成後の修復で担保）。
+  C4 同一レーン連続は従来ルール（hard の縦連だけ例外）を維持。
+- 生成後は check-two-thumb.py の check_charts() で全譜面を検証し、違反が
+  あれば charts.json を書き出さずに終了する。
 
 v2 の土台（維持）:
 - 拍グリッドは librosa の実測拍列に沿わせる（回帰直線＋残差の移動平均で平滑化し、
@@ -77,15 +92,20 @@ SEED = 20251119
 
 # パターンの語彙。半小節（2拍＝16分スロット8個）を単位に、rel=単位内の16分位置、
 # off=レーンの相対オフセット（フィット時に平行移動と鏡像で実レーンへ写す）。
+# v4: 16分パターン（burst）は、どのフィットでも同側3連（C3a）にならない形にする。
+# - trill は同側2レーンの交互（片手トリル）をやめ、左右交互（0↔2 / 1↔3 系）に変更。
+# - wave16 は往復形 [0,1,2,3,2,1,0,1] だと右側3連（2,3,2）が出るため、
+#   左右2連ずつの往復 [0,1,3,2,1,0,2,3] に変更（鏡像も同側最大2連）。
+# - roll は元から左右2連ずつで問題なし。
 PATTERNS = {
     "stair": {"rel": [0, 2, 4, 6], "off": [0, 1, 2, 3], "burst": False},
     "wave": {"rel": [0, 2, 4, 6], "off": [0, 1, 2, 1], "burst": False},
     "alt": {"rel": [0, 2, 4, 6], "off": [0, 1, 0, 1], "burst": False},
     "cross": {"rel": [0, 2, 4, 6], "off": [0, 2, 1, 3], "burst": False},
     "jack": {"rel": [0, 2, 4], "off": [0, 0, 0], "burst": False},
-    "trill": {"rel": [0, 1, 2, 3, 4, 5, 6, 7], "off": [0, 1, 0, 1, 0, 1, 0, 1], "burst": True},
+    "trill": {"rel": [0, 1, 2, 3, 4, 5, 6, 7], "off": [0, 2, 0, 2, 0, 2, 0, 2], "burst": True},
     "roll": {"rel": [0, 1, 2, 3, 4, 5, 6, 7], "off": [0, 1, 2, 3, 0, 1, 2, 3], "burst": True},
-    "wave16": {"rel": [0, 1, 2, 3, 4, 5, 6, 7], "off": [0, 1, 2, 3, 2, 1, 0, 1], "burst": True},
+    "wave16": {"rel": [0, 1, 2, 3, 4, 5, 6, 7], "off": [0, 1, 3, 2, 1, 0, 2, 3], "burst": True},
     "sparse": {"rel": [], "off": [], "burst": False},
 }
 BURST_PATTERNS = {name for name, p in PATTERNS.items() if p["burst"]}
@@ -361,6 +381,7 @@ class Realizer:
         self.head_counts = [0, 0, 0, 0]  # 単位の頭（rel=0）のノーツだけの分布。easy の偏り対策
         self.total = 0
         self.prev_lanes = []  # 直近のレーン列（末尾が最新）
+        self.recent = []  # 直近のノーツの (16分グリッド位置, レーン)。両親指制約の罰金用
         # 難易度ごとの部分列のレーン履歴（h=全ノーツ, n=8分位置, e=拍位置）。
         # 部分列でも同一レーン3連続を作らないために使う（v2 の assign_lanes と同じ考え方）
         self.level_last = {"h": [], "n": [], "e": []}
@@ -396,6 +417,7 @@ class Realizer:
             self.head_counts[lane] += 1
         self.total += 1
         self.prev_lanes.append(lane)
+        self.recent.append((slot["beat"] * 4 + slot["sub"], lane))
         self.level_last["h"].append(lane)
         if slot["sub"] % 2 == 0:
             self.level_last["n"].append(lane)
@@ -420,9 +442,48 @@ class Realizer:
                     pen += 60.0
         return pen
 
-    def fit_cost(self, lanes, pattern_name, pitches, subs):
+    def side_penalty(self, lanes, grids):
+        """両親指制約 C3a/C3b に触れる候補への罰金（check-two-thumb.py と同じ定義）。
+
+        lanes/grids は候補フィットのノーツ列（時刻順）。直近の実績とつなげて数える。
+        C3a: 間隔1ステップ以下の連なりで同側3連。C3b: 同側2レーン交互が5連以上。
+        """
+        seq = self.recent[-12:] + list(zip(grids, lanes))
+        pen = 0.0
+        run = 0
+        prev = None
+        for g, l in seq:
+            s = l // 2
+            if prev is not None and g - prev[0] <= 1 and s == prev[1]:
+                run += 1
+            else:
+                run = 1
+            if run >= 3:
+                pen += 80.0
+            prev = (g, s)
+        if seq:
+            side = seq[-1][1] // 2
+            lanes_seen = set()
+            length = 0
+            prev = None
+            for g, l in reversed(seq):
+                if l // 2 != side:
+                    break
+                if prev is not None and (prev[0] - g > 2 or l == prev[1]):
+                    break
+                if l not in lanes_seen and len(lanes_seen) >= 2:
+                    break
+                lanes_seen.add(l)
+                length += 1
+                prev = (g, l)
+            if length >= 5 and len(lanes_seen) == 2:
+                pen += 80.0 * (length - 4)
+        return pen
+
+    def fit_cost(self, lanes, pattern_name, pitches, subs, grids):
         """フィット候補のコスト。小さいほど良い。3連続を作る候補は強く避ける。"""
         cost = self.run_penalty(lanes, subs, pattern_name)
+        cost += self.side_penalty(lanes, grids)
         if self.prev_lanes:
             delta = abs(lanes[0] - self.prev_lanes[-1])
             cost += {0: 0.35, 1: 0.0, 2: 0.5, 3: 1.1}[delta]
@@ -455,9 +516,10 @@ class Realizer:
         offs = [o for _r, o, _s in steps]
         pitches = [s["pitch_lane"] for _r, _o, s in steps]
         subs = [s["sub"] for _r, _o, s in steps]
+        grids = [s["beat"] * 4 + s["sub"] for _r, _o, s in steps]
         best_lanes, best_cost = None, None
         for lanes in pattern_fits(offs, mirror_only=mirror_only):
-            c = self.fit_cost(lanes, pattern_name, pitches, subs)
+            c = self.fit_cost(lanes, pattern_name, pitches, subs, grids)
             if best_cost is None or c < best_cost:
                 best_lanes, best_cost = lanes, c
         for (rel, _off, slot), lane in zip(steps, best_lanes):
@@ -466,11 +528,13 @@ class Realizer:
 
     def _best_single_lane(self, slot):
         best_lane, best_cost = 0, None
+        grid = slot["beat"] * 4 + slot["sub"]
         for lane in range(4):
             cost = (
                 2.0 * (self.counts[lane] / max(1, self.total))
                 + 1.6 * (self.head_counts[lane] / max(1, sum(self.head_counts)))
                 + 0.06 * abs(lane - slot["pitch_lane"])
+                + self.side_penalty([lane], [grid])
             )
             for level in ("h", "n", "e"):
                 last = self.level_last[level]
@@ -544,6 +608,73 @@ def repair_runs(id_sets, notes_by_id):
             mid = bad[len(bad) // 2]
             for lower in order[di:]:
                 id_sets[lower].discard(mid["id"])
+    return id_sets
+
+
+def repair_side_runs(id_sets, notes_by_id, chord_ids):
+    """両親指制約 C3a/C3b の違反を直す（check-two-thumb.py と同じ定義）。
+
+    難易度ごとの部分列で数え直す必要がある（間引きで隣接関係が変わるため）。
+    落としたノーツは下位難易度からも落として入れ子を保つ（repair_runs と同じ作法）。
+    同時押しの片方は優先的に残し、違反の真ん中寄りを落とす。
+    """
+
+    def grid_of(n):
+        return n["beat"] * 4 + n["sub"]
+
+    order = ["hard", "normal", "easy"]
+    for di, diff in enumerate(order):
+        guard = 0
+        while True:
+            guard += 1
+            assert guard <= 1000, f"{diff}: repair_side_runs が収束しない"
+            seq = sorted(
+                (notes_by_id[i] for i in id_sets[diff]),
+                key=lambda n: (grid_of(n), n["lane"]),
+            )
+            target = None
+            # C3a: 間隔1ステップ以下の連なりで同側3連
+            run_notes = []
+            prev = None
+            for n in seq:
+                if (
+                    prev is not None
+                    and grid_of(n) - grid_of(prev) <= 1
+                    and n["lane"] // 2 == prev["lane"] // 2
+                ):
+                    run_notes.append(n)
+                else:
+                    run_notes = [n]
+                prev = n
+                if len(run_notes) >= 3:
+                    target = run_notes[-3:]
+                    break
+            # C3b: 同側2レーン交互（間隔2ステップ以下）が5連以上
+            if target is None:
+                for i in range(len(seq)):
+                    lanes_seen = {seq[i]["lane"]}
+                    j = i
+                    while j + 1 < len(seq):
+                        a, b = seq[j], seq[j + 1]
+                        if b["lane"] // 2 != seq[i]["lane"] // 2:
+                            break
+                        if grid_of(b) - grid_of(a) > 2:
+                            break
+                        if b["lane"] == a["lane"]:
+                            break
+                        if b["lane"] not in lanes_seen and len(lanes_seen) >= 2:
+                            break
+                        lanes_seen.add(b["lane"])
+                        j += 1
+                    if j - i + 1 >= 5 and len(lanes_seen) == 2:
+                        target = seq[i : j + 1]
+                        break
+            if target is None:
+                break
+            pool = [n for n in target if n["id"] not in chord_ids] or list(target)
+            victim = pool[len(pool) // 2]
+            for lower in order[di:]:
+                id_sets[lower].discard(victim["id"])
     return id_sets
 
 
@@ -719,6 +850,7 @@ def process_song(song_id, meta, y, sr):
             head_notes.setdefault(n["bar"], n)
     climax_bars = {max(p, key=lambda b: energies.get(b, 0.5)) for p in phrases}
     chord_times = set()
+    chord_ids = set()  # 同時押しのペアを構成するノーツ（生成後の修復で優先的に残す）
     for bar, head in sorted(head_notes.items()):
         strong_fever = head["fever"] and head["strength"] >= thr[84]
         climax = bar in climax_bars and head["strength"] >= thr[80]
@@ -728,13 +860,16 @@ def process_song(song_id, meta, y, sr):
         slot = slot_map.get((head["beat"], 0))
         if slot is None:
             continue
+        # C1: 相方は反対側のレーンだけ（両親指で1本ずつ押せる組み合わせにする）
         partner_lane = min(
-            (l for l in range(4) if l != head["lane"]),
+            (l for l in range(4) if l // 2 != head["lane"] // 2),
             key=lambda l: (realizer.counts[l], -abs(l - head["lane"])),
         )
         partner = realizer.add_note(slot, partner_lane, "chord", None, 0)
         partner["strength"] = head["strength"]
         chord_times.add(head["time_ms"])
+        chord_ids.add(head["id"])
+        chord_ids.add(partner["id"])
     notes = realizer.notes
 
     # 長押し: 強いオンセットの後、次の強いオンセットまで音が持続する場所に置く
@@ -782,13 +917,22 @@ def process_song(song_id, meta, y, sr):
         tail_ms = int(round(tail_t * 1000))
         if tail_ms - n["time_ms"] < 380:
             continue
+        # C2: 帯の中に同時押しの時刻があると、ペアの片方は必ず拘束側に来るので置かない
+        if any(n["time_ms"] < ct <= tail_ms for ct in chord_times):
+            continue
         if any(not (tail_ms <= a0 or n["time_ms"] >= a1) for a0, a1 in accepted):
             continue
         n["hold_ms"] = tail_ms - n["time_ms"]
         n["tail_ms"] = tail_ms
         accepted.append((n["time_ms"], tail_ms))
         for m in notes:
-            if m is not n and m["lane"] == n["lane"] and n["time_ms"] < m["time_ms"] < tail_ms + period * 500:
+            if m is n or not (n["time_ms"] < m["time_ms"]):
+                continue
+            if m["lane"] == n["lane"] and m["time_ms"] < tail_ms + period * 500:
+                # 同一レーンは帯の中＋尾の直後しばらくも置かない（従来ルール）
+                removed_ids.add(m["id"])
+            elif m["lane"] // 2 == n["lane"] // 2 and m["time_ms"] <= tail_ms:
+                # C2: 拘束されている親指の側（もう1レーン）も帯の中には置かない
                 removed_ids.add(m["id"])
     notes = [n for n in notes if n["id"] not in removed_ids]
 
@@ -805,7 +949,8 @@ def process_song(song_id, meta, y, sr):
         n
         for n in notes
         if n["hold_ms"] > 0
-        or not any(lane == n["lane"] and h0 < n["time_ms"] <= h1 for h0, h1, lane in hold_spans)
+        # C2: スナップで帯の中に入った同側ノーツも落とす（v3 までは同一レーンだけだった）
+        or not any(lane // 2 == n["lane"] // 2 and h0 < n["time_ms"] <= h1 for h0, h1, lane in hold_spans)
     ]
     last_tail = -1
     for n in sorted((n for n in notes if n["hold_ms"] > 0), key=lambda n: n["time_ms"]):
@@ -850,8 +995,10 @@ def process_song(song_id, meta, y, sr):
             for l in range(4)
         }
         scarcest = min(len(v) for v in by_lane.values())
-        total_target = min(cap, int(scarcest / 0.20)) if scarcest else min(cap, sum(len(v) for v in by_lane.values()))
-        ceil_q = int(total_target * 0.305)
+        # v4: 後段の修復（repair_runs / repair_side_runs）が下位難易度からもノーツを
+        # 落として分布が寄るため、検証範囲（18〜32%）より内側を狙う
+        total_target = min(cap, int(scarcest / 0.205)) if scarcest else min(cap, sum(len(v) for v in by_lane.values()))
+        ceil_q = int(total_target * 0.295)
         kept = []
         kept_times = []
         lane_kept = [0, 0, 0, 0]
@@ -880,7 +1027,17 @@ def process_song(song_id, meta, y, sr):
     normal_ids = thin(normal_ids, NORMAL_CAP, 150)
     easy_ids = {i for i in normal_ids if notes_by_id[i]["sub"] == 0 and notes_by_id[i]["kind"] != "chord"}
     easy_ids = thin(easy_ids, EASY_CAP, 260)
-    id_sets = repair_runs({"hard": hard_ids, "normal": normal_ids, "easy": easy_ids}, notes_by_id)
+    id_sets = {"hard": hard_ids, "normal": normal_ids, "easy": easy_ids}
+    # 同一レーン修復と両親指修復は、片方の「落とす」が他方の違反（連の接続）を
+    # 作ることがあるので、どちらも動かなくなるまで交互に回す（落とすだけなので収束する）
+    for _ in range(50):
+        before = {d: len(s) for d, s in id_sets.items()}
+        id_sets = repair_runs(id_sets, notes_by_id)
+        id_sets = repair_side_runs(id_sets, notes_by_id, chord_ids)
+        if all(len(id_sets[d]) == before[d] for d in before):
+            break
+    else:
+        raise AssertionError(f"{song_id}: 修復が収束しない")
 
     def final_notes(diff, ids):
         seq = sorted((notes_by_id[i] for i in ids), key=lambda n: (n["time_ms"], n["lane"]))
@@ -970,6 +1127,22 @@ def main() -> int:
             song_json, rep = process_song(song_id, meta, y, sr)
             out[song_id] = song_json
             report[song_id] = rep
+    # 両親指制約の最終検証: 違反が残っていたら書き出さない（チェッカーが正本）
+    import importlib.util
+
+    sys.dont_write_bytecode = True  # __pycache__ を作らない
+    spec = importlib.util.spec_from_file_location(
+        "check_two_thumb", Path(__file__).with_name("check-two-thumb.py")
+    )
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    violations = checker.check_charts(out)
+    if violations:
+        print(f"two-thumb check: 違反 {len(violations)} 件が残っているため書き出しません")
+        for v in violations[:30]:
+            print(f"  {v[0]}/{v[1]} {v[2]}: {v[3]}")
+        return 1
+    print("two-thumb check: OK（違反 0 件）")
     dest = ROOT / "src/data/charts.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")

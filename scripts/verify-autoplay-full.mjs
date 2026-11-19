@@ -1,0 +1,80 @@
+// オートプレイ全通し確認: 設定のデバッグモード＋オートプレイで両曲・hard を
+// 実時間で最後まで再生し、フルコンボ（MISS 0・最大コンボ＝全ノーツ数）に
+// 到達することを確かめる。譜面を再生成したときの完走可能性チェック用。
+// 1曲あたり実時間（約2分）がかかるので、通常の E2E（npm run test:e2e）には
+// 入れず、譜面を作り替えたときにだけ手で実行する。
+// 使い方: npm run build && node scripts/verify-autoplay-full.mjs
+import { chromium } from '@playwright/test';
+import { preview } from 'vite';
+import { readFileSync } from 'node:fs';
+
+const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8'));
+const SONGS = [
+  { id: 'highway', label: '石畳のハイウェイ' },
+  { id: 'night', label: 'Kiso Night Silhouette' },
+];
+
+const server = await preview({ preview: { port: 4176, strictPort: true }, logLevel: 'warn' });
+const url = 'http://localhost:4176/';
+const browser = await chromium.launch(
+  process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {},
+);
+let failed = false;
+try {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    serviceWorkers: 'block',
+  });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => {
+    failed = true;
+    console.error(`pageerror: ${e.message}`);
+  });
+  await page.goto(url);
+  await page.waitForFunction(() => globalThis.__appStarted === true);
+
+  // 設定でデバッグモード＋オートプレイを有効化（ユーザー向け設定の経路で）
+  await page.locator('#settings-open').scrollIntoViewIfNeeded();
+  await page.click('#settings-open');
+  await page.locator('#debug-button').click();
+  await page.locator('#autoplay-button').click();
+  await page.locator('#settings-close-bottom').click();
+  await page.getByRole('button', { name: 'むずかしい' }).click();
+
+  for (const song of SONGS) {
+    const total = charts[song.id].charts.hard.length;
+    const durationMs = charts[song.id].durationMs;
+    await page.locator(`.song-card[data-song="${song.id}"]`).click();
+    await page.getByRole('button', { name: 'スタート' }).click();
+    await page.waitForFunction("document.body.dataset.game === 'playing'", null, { timeout: 30_000 });
+    const t0 = Date.now();
+    // 曲の終わりまで実時間で待つ（READY 2秒＋曲長＋余裕）
+    await page.waitForFunction("document.body.dataset.game === 'result'", null, {
+      timeout: durationMs + 90_000,
+    });
+    const counts = await page.locator('#result-counts').textContent();
+    const combo = Number(await page.locator('#result-combo').textContent());
+    const miss = Number(/MISS (\d+)/.exec(counts ?? '')?.[1] ?? -1);
+    const ok = miss === 0 && combo === total;
+    console.log(
+      `${song.id} (${song.label}) hard: ${counts} / 最大コンボ ${combo} / 全ノーツ ${total}` +
+        ` / 所要 ${Math.round((Date.now() - t0) / 1000)}秒 => ${ok ? 'フルコンボ OK' : 'NG'}`,
+    );
+    if (!ok) failed = true;
+    await page.locator('#back-button').click();
+    // 戻るボタンは画面表示の切り替えだけ（data-game は 'result' のままが仕様）
+    await page.waitForFunction(
+      "document.getElementById('result-screen').hidden && !document.getElementById('menu-screen').hidden",
+      null,
+      { timeout: 10_000 },
+    );
+  }
+} finally {
+  await browser.close();
+  await server.close();
+}
+if (failed) {
+  console.error('verify-autoplay-full: 失敗');
+  process.exit(1);
+}
+console.log('verify-autoplay-full: 両曲 hard をオートプレイでフルコンボ完走');
