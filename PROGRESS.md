@@ -1,12 +1,18 @@
 # 進捗メモ（作業用）
 
-更新: 2026-11-19 v1.3.0 公開
+更新: 2026-11-19 v1.4.0 公開
 
 ## 状態: 完了
 - pwa-template で新規構築（git main）、暗い固定テーマ
-- 収録曲: 『石畳のハイウェイ』BPM136 / 『Kiso Night Silhouette』BPM152（音源は MP3 192kbps、ジャケットは動画フレーム）
-- 譜面は scripts/generate-charts.py（librosa）で生成: 石畳 181/343/680、Kiso Night 174/347/680
+- 収録曲: 『石畳のハイウェイ』BPM135 / 『Kiso Night Silhouette』BPM150（音源は MP3 192kbps、ジャケットは動画フレーム）
+- 譜面は scripts/generate-charts.py（librosa、v2方式）で生成: 両曲とも 190/360/680
 - 公開: tanabata-soft/6tbherc3zg（public）→ https://tanabata-soft.github.io/6tbherc3zg/
+
+## v1.4.0（2026-11-19）
+- 譜面を全面再生成（生成方式 v2）: 固定間隔グリッドを廃止し、実測拍列（回帰＋残差の移動平均で平滑化）に沿わせて16分スロットを補間。オンセットピークへのスナップ（79%/86%）、密度のエネルギー連動、節目の休符、レーンの流れコスト最小化を導入
+- ズレ実測（hard、実拍細分位置との差）: |ズレ|>30ms のノーツ 石畳 41%→4%、Kiso Night 39%→5%。区間ごとの平均ズレは ±4ms 以内で回転ドリフト解消
+- charts.json に実測拍列 beats を追加（ゲームは無視）。単体テスト tests/charts.test.ts で整合を検証（全57件通過）。表示 BPM を実測値 135/150 に修正
+- 検証: verify 全通過、E2E 17件通過、shots 目視確認済み。詳細は docs/HANDOVER.md を参照
 
 ## v1.3.0（2026-11-19）
 - 記録のバックアップ機能を削除（オーナー判断）。UI・src/backup.ts・storage の export/import・reloadSound/reloadVibrate・関連テスト/E2E/shots を撤去。SCHEMA_VERSION は storage.ts へ移設。テンプレート標準からの意図的な逸脱として CLAUDE.md / HANDOVER.md に明記（再追加しない）
