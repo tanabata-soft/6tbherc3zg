@@ -24,6 +24,9 @@ v2 の土台（維持）:
   離れてズレ統計が悪化するため v3 で狭めた）。
 - 密度は小節ごとの RMS エネルギーに連動。節の切れ目（FEVER境界・エネルギーの
   落ち際）の直前には小さな休符を作る。
+- FEVER 区間は密度を上乗せする（v1.9.0、オーナー指示「フィーバー中はノードも
+  多くして、気持ちよく叩けるように」）: 計画エネルギーの底上げ＋16分パターンの
+  確率アップ（plan_phrase）と、間引きでの FEVER 優先（thin）で効かせる。
 - charts.json に実測拍列（beats）も保存し、単体テストがズレを検証する。
 - 表示 BPM は回帰から求めた実測値（整数）。FEVER 区間は固定値のまま。
 
@@ -330,34 +333,48 @@ def segment_phrases(playable_bars, boundary_bars):
     return phrases
 
 
-def plan_phrase(rng, phrase, unit_energy, unit_gate, is_chorus):
+def plan_phrase(rng, phrase, unit_energy, unit_gate, unit_fever, is_chorus):
     """フレーズ内の各半小節にパターン名を割り当てる計画を返す。
 
-    unit_energy(unit) -> 0..1、unit_gate(unit, kind) -> bool（burst/jack を置ける強さか）。
+    unit_energy(unit) -> 0..1、unit_gate(unit, kind) -> bool（burst/jack を置ける強さか）、
+    unit_fever(unit) -> bool（FEVER 区間のユニットか）。
     unit は (bar, half) のタプル。
+
+    FEVER 区間は密度を上げる（オーナー指示）: 計画エネルギーを +0.30 底上げして
+    上の段に寄せ、16分パターン（burst）の確率も 0.42 → 0.62 に上げる。底上げは
+    計画だけに効かせ、ノーツに残る energy（間引きの優先度など）は実測のままにする。
+    難易度の下位（normal / easy）は間引きで自然に増え方が緩やかになる（拍位置だけの
+    easy は控えめ、8分位置の normal は中くらい、全部残る hard が一番増える）。
     """
     units = [(bar, half) for bar in phrase for half in (0, 1)]
     plan = []
     for unit in units:
         e = unit_energy(unit)
+        fever = unit_fever(unit)
+        pe = min(1.0, e + 0.30) if fever else e
         r = rng.random()
-        if e < 0.28:
+        if pe < 0.28:
             name = "sparse" if r < 0.45 else rng.choice(["wave", "stair"])
-        elif e < 0.62:
-            if r < 0.08:
+        elif pe < 0.62:
+            sparse_p = 0.03 if fever else 0.08
+            jack_p = 0.065 if fever else 0.115
+            if r < sparse_p:
                 name = "sparse"
-            elif r < 0.115 and unit_gate(unit, "jack"):
+            elif r < jack_p and unit_gate(unit, "jack"):
                 name = "jack"
             else:
                 name = rng.choice(["stair", "wave", "alt", "cross", "wave", "stair"])
         else:
-            if r < 0.42 and unit_gate(unit, "burst"):
+            burst_p = 0.62 if fever else 0.42
+            if r < burst_p and unit_gate(unit, "burst"):
                 name = rng.choice(["trill", "roll", "wave16"])
-            elif r < 0.465 and unit_gate(unit, "jack"):
+            elif r < burst_p + 0.045 and unit_gate(unit, "jack"):
                 name = "jack"
-            elif r < 0.50:
+            elif r < burst_p + 0.08 and not fever:
                 name = "sparse"
             else:
+                # FEVER で burst のゲートが通らなかったユニットは sparse に落とさず
+                # 密な8分パターンにする（落とすと密度上げが逆効果になる）
                 name = rng.choice(["stair", "wave", "alt", "cross", "wave", "alt"])
         plan.append(name)
     # サビ内では後半に前半のパターンを繰り返す（モチーフの反復）
@@ -803,14 +820,19 @@ def process_song(song_id, meta, y, sr):
     ue_p45 = float(np.percentile(ue, 45))
     ue_p60 = float(np.percentile(ue, 60))
 
+    def unit_fever(unit):
+        return any(s is not None and s["fever"] for s in unit_slots(unit))
+
     def unit_gate(unit, kind):
         us = unit_slots(unit)
+        # FEVER 区間はゲートのエネルギー条件も計画と同じく底上げする（強さの条件は不変）
+        ge = unit_energy(unit) + (0.30 if unit_fever(unit) else 0.0)
         if kind == "burst":
             odd = [s["strength"] for r, s in enumerate(us) if s is not None and r % 2 == 1]
-            return len(odd) >= 3 and float(np.mean(odd)) >= thr[45] and unit_energy(unit) >= ue_p45
+            return len(odd) >= 3 and float(np.mean(odd)) >= thr[45] and ge >= ue_p45
         if kind == "jack":
             even = [s["strength"] for r, s in enumerate(us) if s is not None and r in (0, 2, 4)]
-            return len(even) == 3 and float(np.mean(even)) >= thr[65] and unit_energy(unit) >= ue_p60
+            return len(even) == 3 and float(np.mean(even)) >= thr[65] and ge >= ue_p60
         return False
 
     # 計画 → 実体化（サビはモチーフを再登場させる）
@@ -829,12 +851,12 @@ def process_song(song_id, meta, y, sr):
                 chorus_first_bars.add(phrase[0])
             units = [(bar, half) for bar in phrase for half in (0, 1)]
             if motif_plan is None:
-                units, plan = plan_phrase(rng, phrase, unit_energy, unit_gate, True)
+                units, plan = plan_phrase(rng, phrase, unit_energy, unit_gate, unit_fever, True)
                 motif_plan = plan
             else:
                 plan = [motif_plan[i % len(motif_plan)] for i in range(len(units))]
         else:
-            units, plan = plan_phrase(rng, phrase, unit_energy, unit_gate, False)
+            units, plan = plan_phrase(rng, phrase, unit_energy, unit_gate, unit_fever, False)
         mirror = is_chorus and chorus_count >= 2
         for ui, (unit, name) in enumerate(zip(units, plan)):
             if is_chorus and chorus_count >= 3 and ui == len(units) - 1:
@@ -991,7 +1013,12 @@ def process_song(song_id, meta, y, sr):
         同時押しのペアは同刻なので間隔チェックの対象外。
         """
         by_lane = {
-            l: sorted((notes_by_id[i] for i in ids if notes_by_id[i]["lane"] == l), key=lambda n: -n["strength"])
+            # FEVER 区間のノーツは少し優先して残す（密度上げを下位難易度にも効かせる。
+            # 同時押し候補の ×1.25 と同じ考え方で、こちらは ×1.2 に抑える）
+            l: sorted(
+                (notes_by_id[i] for i in ids if notes_by_id[i]["lane"] == l),
+                key=lambda n: -(n["strength"] * (1.2 if n["fever"] else 1.0)),
+            )
             for l in range(4)
         }
         scarcest = min(len(v) for v in by_lane.values())
