@@ -33,7 +33,7 @@ export default defineConfig({
       manifest: {
         name: APP_NAME,
         short_name: APP_NAME,
-        description: '木曽を歌う2曲で遊ぶ、4レーンのリズムゲーム',
+        description: '木曽を歌う4曲で遊ぶ、4レーンのリズムゲーム',
         lang: 'ja',
         display: 'standalone',
         start_url: './',
