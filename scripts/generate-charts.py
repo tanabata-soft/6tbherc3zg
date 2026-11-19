@@ -46,17 +46,19 @@ SR = 22050
 HOP = 512
 
 SONGS = {
+    # v1.6.0 から音源は「音ゲー用ショート編集」（イントロ→1番→サビで終わる編集版）。
+    # 全長版は assets-full/ に保管（編集の詳細は assets-full/README.md）。
     "highway": {
         "title": "石畳のハイウェイ",
         "audio": "src/assets/highway.mp3",
-        # サビ「ニコラス・ケイジ 幻じゃない〜」の繰り返し区間（字幕）と RMS 盛り上がり（-13dB台）の一致区間
-        "fever": [[57, 96], [144, 174]],
+        # 編集版（104.8秒）: サビ「ニコラス・ケイジ 幻じゃない〜」の繰り返し区間（字幕）と RMS 盛り上がり（-13dB台）の一致区間
+        "fever": [[57, 96]],
     },
     "night": {
         "title": "Kiso Night Silhouette",
         "audio": "src/assets/night.mp3",
-        # サビ「Kono tokimeki wa nani〜」の繰り返し区間（字幕）と RMS 盛り上がりの一致区間
-        "fever": [[44, 67], [96, 128], [140, 164]],
+        # 編集版（127.7秒）: サビ「Kono tokimeki wa nani〜」の繰り返し区間（字幕）と RMS 盛り上がりの一致区間（1番・2番のサビ）
+        "fever": [[44, 67], [96, 127]],
     },
 }
 

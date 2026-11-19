@@ -115,9 +115,10 @@ describe('譜面データ（生成済み charts.json）', () => {
     }
   });
   it('曲の長さと BPM が実測の範囲にある', () => {
+    // v1.6.0 から音ゲー用ショート編集（約105秒／約128秒）。全長版（約180秒）に戻っていないことも見る
     for (const entry of SONGS) {
-      expect(entry.data.durationMs).toBeGreaterThan(170_000);
-      expect(entry.data.durationMs).toBeLessThan(185_000);
+      expect(entry.data.durationMs).toBeGreaterThan(95_000);
+      expect(entry.data.durationMs).toBeLessThan(135_000);
       expect(entry.data.bpm).toBeGreaterThan(100);
       expect(entry.data.bpm).toBeLessThan(200);
     }

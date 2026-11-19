@@ -18,6 +18,7 @@ PWA アプリ(ツール/ゲーム)の共通テンプレート。**新しいア�
 - ゲーム仕様の正本は `src/logic.ts`（判定幅・スコア・精度・ランク）と `src/data/charts.json`（譜面）。
 - 譜面は手で直さない。`scripts/generate-charts.py` を再実行して作り直す（v3方式: 実測拍列に沿せた16分スロット＋スナップ±38ms、フレーズ単位のパターン割り当てとサビのモチーフ再登場、強い拍への同時押し、持続音への長押し、密度は小節エネルギー連動、難易度は入れ子 hard ⊇ normal ⊇ easy、FEVER は歌詞字幕のサビ位置＋RMS。設計の根拠は `docs/CHART-DESIGN.md`）。**固定間隔グリッド（位相＋周期の中央値）に戻さない**（周期の推定誤差が累積して拍と回転ズレするため。v1.4.0 で廃止）。
 - 音源は MP3（`src/assets/*.mp3`）。AAC/m4a はヘッドレス Chromium がデコードできず E2E が成立しないため使わない。iPhone Safari は MP3 の decodeAudioData に対応する。
+- 音源は v1.6.0 から音ゲー用ショート編集（イントロ→1番→サビで終わる編集版）。全長版は `assets-full/` に保管し、dist には入れない。全長版に戻すときは FEVER 区間も全長版の値に戻す（手順は `assets-full/README.md`）。
 - **記録のバックアップ機能（ファイルへの書き出し / 読み込み）は、v1.3.0 でオーナー判断により削除した**（テンプレート標準からの意図的な逸脱）。**再追加しない。** 保存は端末内（localStorage）だけ。保存データの版番号（`SCHEMA_VERSION`）は `src/storage.ts` が持つ。
 - 音源・ジャケットは `src/assets/` から import する（dist では assets として出力され precache に入る。build:preview では data URI 化される）。public/ に直置きしない。
 
