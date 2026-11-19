@@ -7,6 +7,7 @@ import { setupInstallGuide } from './install';
 import { setupUpdateBanner } from './pwa';
 import { isSoundOn, reloadSound, setSound } from './sound';
 import { isVibrateOn, reloadVibrate, setVibrate } from './haptics';
+import { audioState, isUnlocked, unlockAudio } from './audio';
 import { exportBackup, importBackup, load, migrateStorage, requestPersist, save } from './storage';
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -120,6 +121,30 @@ $('vibrate-button').addEventListener('click', () => {
   renderMenu();
 });
 
+// ---- 設定モーダル ----
+const settingsDialog = $<HTMLDialogElement>('settings-dialog');
+function openSettings(): void {
+  renderMenu();
+  if (!settingsDialog.open) {
+    settingsDialog.showModal();
+    // 開いている間は背面のスクロールを止める（閉じたら 'close' イベントで戻す）
+    document.body.classList.add('dialog-open');
+  }
+}
+function closeSettings(): void {
+  if (settingsDialog.open) settingsDialog.close();
+}
+$('settings-open').addEventListener('click', openSettings);
+$('settings-close').addEventListener('click', closeSettings);
+$('settings-close-bottom').addEventListener('click', closeSettings);
+settingsDialog.addEventListener('click', (e) => {
+  // 背景（ダイアログ自身の余白部分）のタップで閉じる
+  if (e.target === settingsDialog) closeSettings();
+});
+settingsDialog.addEventListener('close', () => {
+  document.body.classList.remove('dialog-open');
+});
+
 // ---- ゲーム ----
 const game = new Game($<HTMLCanvasElement>('game-canvas'), {
   onFinish: (result) => showResult(result),
@@ -133,6 +158,8 @@ let lastEntry: SongEntry = songById(selectedSong);
 let lastDiff: Difficulty = selectedDiff;
 
 async function startGame(): Promise<void> {
+  // スタートボタンのタップ（ジェスチャ）の中で、await より先に音声を unlock する（iPhone 対策）
+  unlockAudio();
   const entry = songById(selectedSong);
   lastEntry = entry;
   lastDiff = selectedDiff;
@@ -209,6 +236,9 @@ $<HTMLInputElement>('backup-import').addEventListener('change', async (e) => {
   input.value = '';
 });
 
+// 初回のタップで音声を unlock する（iPhone ではジェスチャの中で AudioContext を起こす必要がある）
+window.addEventListener('pointerdown', () => unlockAudio());
+
 $('version').textContent = __APP_VERSION__;
 // デバッグモード: バージョンの表示を続けて 5 回タップで切り替え
 setupDebug($('debug-panel'), $('version-line'), [
@@ -228,6 +258,8 @@ exposeTestApi({
     playing: game.isPlaying,
     sound: isSoundOn(),
     vibrate: isVibrateOn(),
+    audioUnlocked: isUnlocked(),
+    audioState: audioState(),
   }),
   setState: (patch) => {
     if (typeof patch.song === 'string' && SONGS.some((s) => s.id === patch.song)) selectedSong = patch.song as SongId;

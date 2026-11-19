@@ -4,9 +4,16 @@ import { expect, test } from '@playwright/test';
 // アプリの ID（package.json の name）。保存データのキーの接頭辞になる
 const APP_ID = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { name: string }).name;
 
+/** 設定モーダルを開く（設定はメニュー右上の設定ボタンの中にある） */
+async function openSettings(page: import('@playwright/test').Page): Promise<void> {
+  await page.locator('#settings-open').click();
+  await expect(page.locator('#settings-dialog')).toBeVisible();
+}
+
 test('メニューが表示され、曲と難易度を選べる', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '木曽リズムゲーム' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '木曽ケイジビート' })).toBeVisible();
+  await expect(page.getByText('ニコラスケイジと木曽と私')).toBeVisible();
   await expect(page.locator('.song-card')).toHaveCount(2);
   await expect(page.locator('body')).toHaveAttribute('data-song', 'highway');
 
@@ -15,16 +22,48 @@ test('メニューが表示され、曲と難易度を選べる', async ({ page 
   await page.getByRole('button', { name: 'むずかしい' }).click();
   await expect(page.locator('body')).toHaveAttribute('data-difficulty', 'hard');
 
-  // 選び直しても記録（ベストスコア表示）が壊れない
+  // 選び直しても記録（ベストスコア表示）が壊れない（設定モーダルの中にある）
+  await openSettings(page);
   await expect(page.locator('#menu-best')).toHaveText('0');
+});
+
+test('設定ボタンでモーダルが開き、閉じるボタン・Esc・背景タップで閉じられる', async ({ page }) => {
+  await page.goto('/');
+  const dialog = page.locator('#settings-dialog');
+  // メニュー上では設定項目は見えていない（モーダルの中にある）
+  await expect(page.locator('#sound-button')).toBeHidden();
+  await expect(dialog).toBeHidden();
+
+  await openSettings(page);
+  await expect(page.locator('#sound-button')).toBeVisible();
+  // 閉じるボタンで閉じる
+  await page.getByRole('button', { name: '設定を閉じる' }).click();
+  await expect(dialog).toBeHidden();
+
+  // Esc で閉じる
+  await openSettings(page);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+
+  // 背景（ダイアログの外側）タップで閉じる
+  await openSettings(page);
+  await page.mouse.click(206, 30);
+  await expect(dialog).toBeHidden();
+
+  // 下部の「閉じる」でも閉じる
+  await openSettings(page);
+  await page.locator('#settings-close-bottom').click();
+  await expect(dialog).toBeHidden();
 });
 
 test('オフセット調整が保存される', async ({ page }) => {
   await page.goto('/');
+  await openSettings(page);
   await page.getByRole('button', { name: 'オフセットを10ms増やす' }).click();
   await page.getByRole('button', { name: 'オフセットを10ms増やす' }).click();
   await expect(page.locator('#offset-value')).toHaveText('+20ms');
   await page.reload();
+  await openSettings(page);
   await expect(page.locator('#offset-value')).toHaveText('+20ms');
   await page.getByRole('button', { name: 'オフセットを10ms減らす' }).click();
   await expect(page.locator('#offset-value')).toHaveText('+10ms');
@@ -56,6 +95,7 @@ test('ヒーロー表示が、選んだ曲に切り替わる', async ({ page }) 
 
 test('効果音と振動のオン/オフが切り替わり、保存される', async ({ page }) => {
   await page.goto('/');
+  await openSettings(page);
   const sound = page.locator('#sound-button');
   await expect(sound).toHaveAttribute('aria-pressed', 'true');
   await expect(sound.locator('.toggle-state')).toHaveText('オン');
@@ -70,10 +110,28 @@ test('効果音と振動のオン/オフが切り替わり、保存される', a
 
   // 保存されている（開き直しても戻らない）
   await page.reload();
+  await openSettings(page);
   await expect(page.locator('#sound-button')).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('#vibrate-button')).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('body')).toHaveAttribute('data-sound', 'off');
   await expect(page.locator('body')).toHaveAttribute('data-vibrate', 'off');
+});
+
+test('ゲーム開始で音声が unlock され、AudioContext が running になる', async ({ page }) => {
+  await page.goto('/?debug=1');
+  type TestState = { audioUnlocked: boolean; audioState: string };
+  const readState = () =>
+    page.evaluate(() => {
+      const api = (window as unknown as { __pwaTest?: { getState?: () => TestState } }).__pwaTest;
+      return api?.getState?.() as TestState;
+    });
+  const before = await readState();
+  expect(before.audioUnlocked).toBe(false);
+  await page.getByRole('button', { name: 'スタート' }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+  const after = await readState();
+  expect(after.audioUnlocked).toBe(true);
+  expect(after.audioState).toBe('running');
 });
 
 // 実時間のタイミングに依存するテストなので、並行実行で負荷がかかると揺れる。リトライを許可する
@@ -158,7 +216,10 @@ test('最初の画面にバージョンが表示される', async ({ page }) => 
 
 test('記録をファイルに書き出し、消えたあとに読み込んで戻せる', async ({ page }) => {
   await page.goto('/');
+  await openSettings(page);
   await page.getByRole('button', { name: 'オフセットを10ms増やす' }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#settings-dialog')).toBeHidden();
   await page.getByText('記録のバックアップ').click();
 
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'ファイルに書き出す' }).click()]);
@@ -170,10 +231,14 @@ test('記録をファイルに書き出し、消えたあとに読み込んで�
   // 記録を消す → 読み込んで戻す
   await page.evaluate(() => localStorage.clear());
   await page.reload();
+  await openSettings(page);
   await expect(page.locator('#offset-value')).toHaveText('0ms');
+  await page.keyboard.press('Escape');
   await page.getByText('記録のバックアップ').click();
   await page.locator('#backup-import').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(text) });
+  await openSettings(page);
   await expect(page.locator('#offset-value')).toHaveText('+10ms');
+  await page.keyboard.press('Escape');
   await expect(page.locator('#backup-message')).toContainText('読み込みました');
 });
 
@@ -182,6 +247,7 @@ test('おかしいバックアップファイルは、理由を表示して読�
   await page.getByText('記録のバックアップ').click();
   await page.locator('#backup-import').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"app":"other"}') });
   await expect(page.locator('#backup-message')).toContainText('このアプリのバックアップではありません');
+  await openSettings(page);
   await expect(page.locator('#offset-value')).toHaveText('0ms');
 });
 
@@ -204,6 +270,7 @@ test('起動できないときは「なおす」ボタンが出て、押すと�
 
   await page.unroute('**/assets/*.js');
   await page.getByRole('button', { name: 'なおす' }).click();
+  await openSettings(page);
   await expect(page.locator('#offset-value')).toHaveText('+30ms');
   await expect(page.locator('#boot-error')).toBeHidden();
   // このアプリのキャッシュだけが作り直され、ほかのアプリのキャッシュは残っている
@@ -223,6 +290,7 @@ test('テスト用の入口: ?debug=1 で状態を読めて、data 属性にも�
     api?.setState?.({ song: 'night', difficulty: 'hard', offset: 50 });
   });
   await expect(page.locator('body')).toHaveAttribute('data-song', 'night');
+  await openSettings(page);
   await expect(page.locator('#offset-value')).toHaveText('+50ms');
 });
 

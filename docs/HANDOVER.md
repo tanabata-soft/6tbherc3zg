@@ -2,22 +2,28 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.1.0
+更新: 2026-11-19・版 v1.2.0
 
 ## 今の状態
 
-- 単体HTML版リズムゲームを pwa-template で PWA 化し、新曲2曲に差し替えて公開した。
-  - 曲: 『石畳のハイウェイ』(BPM 136) / 『Kiso Night Silhouette』(BPM 152)、各3分
-  - 譜面は `scripts/generate-charts.py`（librosa）で新規生成。ノーツ数: 石畳 181/343/680、Kiso Night 174/347/680（かんたん/ふつう/むずかしい）
+- アプリ名は『木曽ケイジビート』（副題: ニコラスケイジと木曽と私）。v1.2.0 で『木曽リズムゲーム』から表示名だけを変更した。
+  - **アプリID（package.json の `name` = `kiso-rhythm-game`）は据え置き**。表示名を変えても ID は変えないこと（保存データのキー接頭辞・バックアップの app 名・復旧範囲・キャッシュが ID 由来で、変えると利用者の記録が消える）。
+  - 表示名の正本は `vite.config.ts` の `APP_NAME` と `index.html`（title / apple-mobile-web-app-title / ブランド題字）の2か所。check:content が一致を検査する。
+- 曲: 『石畳のハイウェイ』(BPM 136) / 『Kiso Night Silhouette』(BPM 152)、各3分
+  - 譜面は `scripts/generate-charts.py`（librosa）で生成。ノーツ数: 石畳 181/343/680、Kiso Night 174/347/680（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96][144,174]、Kiso Night [44,67][96,128][140,164]（秒）
-- v1.1.0 でタッチの気持ちよさとメニュー画面を改修した。
-  - ヒット音: `src/sound.ts` の `playHitSound`（サイン波の芯＋ノイズのアタックで打撃音を合成。判定で周波数と音量が変わる。曲の再生と同じ AudioContext を使うので、専用の AudioContext は持たない）
-  - 振動: `src/haptics.ts`（navigator.vibrate、PERFECT 15ms / GREAT 10ms / GOOD 8ms。iPhone Safari は非対応で何も起きないのが正常）
-  - 演出: ノーツの膨らむ残像（Pop）・広がる輪（Ring）・粒子・タップ波紋（Ripple）はすべて `src/game.ts` 内で経過時間（dt）ベースで進める。フレーム数ベースに戻さないこと（120Hz で見え方が変わる）
-  - 設定: 「効果音」（保存キー `sound`）と「振動」（保存キー `vibrate`）のトグルがメニューの設定カードにある。どちらも localStorage の接頭辞つきキーなので、記録のバックアップに自動で含まれる。バックアップ読み込み時は `reloadSound` / `reloadVibrate` でモジュール状態を合わせ直す
-  - メニュー: ヒーロー表示（選択中の曲のジャケット＋ネオンタイトル＋チップ）が主役。ジャケット内の曲名の位置に合わせて `.hero-jacket[data-song]` で object-position を切り替えている（highway は下寄せ、night は上寄せ）。曲選択はサムネイル横並び（`.song-card`、data-song と aria-pressed は E2E が使う）
+- v1.2.0 の変更:
+  - **iPhone で音が出ない問題への対策**（`src/audio.ts` に集約）:
+    - Audio Session API: `applyAudioSession()` が、使える環境では `navigator.audioSession.type = 'playback'` を設定する（iOS 17+。これがないとマナーモードで Web Audio が消音される）。Context 生成時・resume 時・unlock 時に呼ぶ。
+    - unlock: `unlockAudio()` がジェスチャの中で Context 生成＋resume＋無音バッファ（0.05秒）を1回だけ再生する。呼び出しは main.ts の初回 pointerdown とスタート操作（startGame の先頭、await より前）、game.ts の start() 先頭。
+    - 保険: 再生開始直前に `resumeAudio()`、ゲーム中のタップでも state が running でなければ resume を試みる（game.ts の tap()）。
+    - 曲とヒット音は共通のマスター GainNode（`audioOutput()`）経由で destination へ。sound.ts も destination 直結にしないこと。
+    - **最終確認は iPhone 実機でのみ可能**（マナーモードの消音や Audio Session の挙動はブラウザ・ヘッドレスでは再現できない）。実機で鳴らない場合は、まずマナーモード OFF／音量／ホーム画面アプリか Safari かを切り分ける。単体テスト（tests/audio.test.ts、モック）と E2E（開始で unlock され state が running になること）は通っている。
+  - **設定モーダル**: メニューの設定カードは廃止。ブランド題字の右上の「設定」ボタン（`#settings-open`）から `<dialog id="settings-dialog">` を showModal で開く。中身はオフセット調整・効果音／振動トグル・ベストスコア（ID は従来どおり）。背景タップ（dialog 自身への click）・✕・「閉じる」・Esc で閉じ、開いている間は body.dialog-open で背面スクロールを止める。
+    - 「記録のバックアップ」とインストール案内・バージョン表示はテンプレート必須要素としてメニュー下部に残してある（モーダルに入れない）。
+    - E2E の設定操作は `openSettings(page)` ヘルパー経由に統一してある。
 - 公開 URL: https://tanabata-soft.github.io/6tbherc3zg/（リポジトリ: tanabata-soft/6tbherc3zg、public）
-- 検証: `npm run verify` 全通過、E2E 17件通過、shots で新メニュー／ゲーム画面を目視確認済み
+- 検証: `npm run verify` 全通過（単体テスト49件）、E2E 19件通過、shots 15枚で題字・設定モーダル・ゲーム画面を目視確認済み
 - 単体プレビュー: `dist-preview/preview.html`（約11.8MB）
 
 ## やりかけ
@@ -26,7 +32,7 @@
 
 ## 次にやること(優先順)
 
-1. 実機（iPhone）でホーム画面追加・オフライン起動・上端のぼやけがないかを確認する（ブラウザでは再現できない部分）。振動は Android 実機で確認する
+1. **iPhone 実機で v1.2.0 の音が出るか再確認する**（マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.2.0）も見る。振動は Android 実機で確認する
 2. 遊んだ感触で譜面の密度や FEVER 区間を調整したくなったら、`scripts/generate-charts.py` の LEVELS / FEVER を変えて再生成し、版を上げて公開する
 3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_TONE、`src/game.ts` の演出の定数（RING_LIFE など）を変える
 
@@ -36,7 +42,7 @@
 - 音源は約4.3MB×2。precache に入れるため vite.config.ts の workbox `maximumFileSizeToCacheInBytes` を 6MB に上げてある。
 - 音源・ジャケットは `src/assets/` から import する方式（public/ 直置きだと build:preview に入らない）。
 - 譜面生成の Python 環境は `.venv/`（librosa）。/tmp は tmpfs で容量が小さいので venv を置かない。
-- 元ゲームの欠点2点は修正済み: 再プレイ時の再デコード（→ `src/audio.ts` が曲ごとに保持）、プレイ中に画面を隠したときの大量MISS（→ 中断してメニューへ戻す）。
+- ヒット音・演出はすべて曲と同じ AudioContext と経過時間（dt）ベース。フレーム数ベースに戻さないこと（120Hz で見え方が変わる）。
 - E2E のヒットテストは実時間依存で揺れるため、ページ内インターバルでキーを押し続ける方式＋リトライ2回にしてある（`test.describe('ヒット判定（実時間）')`）。CDP 経由でノーツ時刻に1発だけ合わせる方式は、並行実行の負荷で外れるので戻さないこと。
 
 ## 再開のときの指示文

@@ -1,6 +1,6 @@
 // 効果音は Web Audio で合成する（音声ファイルは持たない）。オン/オフ設定は必ず用意する。
 // ヒット音は、曲の再生と同じ AudioContext（src/audio.ts）を使い、短い打撃音をその場で合成する。
-import { audioContext } from './audio';
+import { audioContext, audioOutput } from './audio';
 import { load, save } from './storage';
 import type { Judge } from './logic';
 
@@ -59,7 +59,7 @@ export function playHitSound(judge: HitJudge): void {
     const oscGain = ac.createGain();
     oscGain.gain.setValueAtTime(peak, t);
     oscGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
-    osc.connect(oscGain).connect(ac.destination);
+    osc.connect(oscGain).connect(audioOutput());
     osc.start(t);
     osc.stop(t + 0.1);
 
@@ -71,7 +71,7 @@ export function playHitSound(judge: HitJudge): void {
     band.Q.value = 0.9;
     const noiseGain = ac.createGain();
     noiseGain.gain.value = peak * 0.7;
-    noise.connect(band).connect(noiseGain).connect(ac.destination);
+    noise.connect(band).connect(noiseGain).connect(audioOutput());
     noise.start(t);
 
     // テストが「どの音が鳴ったか」を確認できるようにイベントを出す

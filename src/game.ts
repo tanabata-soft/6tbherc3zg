@@ -20,7 +20,7 @@ import {
   type PlayNote,
 } from './logic';
 import type { SongEntry } from './charts';
-import { audioContext, loadBuffer, nowSeconds, playBuffer, stopCurrent } from './audio';
+import { audioContext, loadBuffer, nowSeconds, playBuffer, resumeAudio, stopCurrent, unlockAudio } from './audio';
 import { playHitSound } from './sound';
 import { vibrateHit } from './haptics';
 import { setData } from './debug';
@@ -169,6 +169,8 @@ export class Game {
 
   /** 曲を読み込んで演奏を始める。読み込み済みなら即座に始まる。 */
   async start(entry: SongEntry, difficulty: Difficulty, offsetMs: number): Promise<void> {
+    // スタート操作のジェスチャの中で呼ばれる前提で、まず音声を unlock する
+    unlockAudio();
     const buf = await loadBuffer(entry.audioUrl);
     if (this.destroyed) return;
     this.entry = entry;
@@ -188,7 +190,10 @@ export class Game {
     this.durationSec = buf.duration;
     this.bg = new Image();
     this.bg.src = entry.jacketUrl;
-    audioContext();
+    // 再生開始の直前にもう一度 resume する（suspended のままだと currentTime が進まず、
+    // その場合は復帰した時点でスケジュールどおり鳴り始める）
+    await resumeAudio();
+    if (this.destroyed) return;
     this.startAt = nowSeconds() + READY_SECONDS;
     this.lastFrameAt = nowSeconds();
     playBuffer(buf, this.startAt);
@@ -215,6 +220,8 @@ export class Game {
   }
 
   private tap(lane: number, rippleX?: number, rippleY?: number): void {
+    // 保険: 再生中に AudioContext が止まっていたら（iOS の interrupted など）、タップのついでに戻す
+    if (audioContext().state !== 'running') void resumeAudio();
     this.flash[lane] = 1;
     // 押した場所に波紋を出す（キーボードのときはレーンの判定ライン中央）
     const lw = this.width / 4;
