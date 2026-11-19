@@ -31,6 +31,7 @@ import {
   type CagePattern,
   type CageZoom,
   type Difficulty,
+  type HeadJudge,
   type Judge,
   type JudgementCounts,
   type PlayNote,
@@ -54,6 +55,8 @@ export interface GameResult {
   maxCombo: number;
   accuracy: number;
   rank: string;
+  /** オートプレイで演奏したか（true の回はベストスコアに残さない） */
+  autoplay: boolean;
 }
 
 export interface GameCallbacks {
@@ -168,6 +171,8 @@ export class Game {
 
   private entry: SongEntry | null = null;
   private difficulty: Difficulty = 'easy';
+  /** オートプレイ中か（設定のデバッグモード配下。start で受け取る） */
+  private autoplay = false;
   private notes: PlayNote[] = [];
   private counts: JudgementCounts = emptyCounts();
   private score = 0;
@@ -217,6 +222,8 @@ export class Game {
       this.abort();
       return;
     }
+    // オートプレイ中はタップ入力を受け付けない（左上の中断だけ従来どおり効く）
+    if (this.autoplay) return;
     const lane = this.laneAt(px);
     this.pointerLanes.set(e.pointerId, lane);
     try {
@@ -250,7 +257,7 @@ export class Game {
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {
-    if (!this.playing || e.repeat) return;
+    if (!this.playing || e.repeat || this.autoplay) return;
     const lane = 'dfjk'.indexOf(e.key.toLowerCase());
     if (lane < 0) return;
     this.keyLanes.add(lane);
@@ -305,20 +312,27 @@ export class Game {
     return this.playing;
   }
 
+  /** 今の演奏がオートプレイか */
+  get isAutoplay(): boolean {
+    return this.autoplay;
+  }
+
   /** テスト用の入口向け: 曲の現在位置（ms。READY 中は負、演奏中でなければ -1） */
   songPositionMs(): number {
     if (!this.playing) return -1;
     return (nowSeconds() - this.startAt) * 1000;
   }
 
-  /** 曲を読み込んで演奏を始める。読み込み済みなら即座に始まる。 */
-  async start(entry: SongEntry, difficulty: Difficulty, offsetMs: number): Promise<void> {
+  /** 曲を読み込んで演奏を始める。読み込み済みなら即座に始まる。autoplay は設定のデバッグモード配下のオートプレイ */
+  async start(entry: SongEntry, difficulty: Difficulty, offsetMs: number, autoplay = false): Promise<void> {
     // スタート操作のジェスチャの中で呼ばれる前提で、まず音声を unlock する
     unlockAudio();
     const buf = await loadBuffer(entry.audioUrl);
     if (this.destroyed) return;
     this.entry = entry;
     this.difficulty = difficulty;
+    this.autoplay = autoplay;
+    setData('autoplay', autoplay ? 'on' : 'off');
     this.notes = makePlayNotes(entry.data.charts[difficulty], offsetMs);
     this.counts = emptyCounts();
     this.score = 0;
@@ -417,29 +431,58 @@ export class Game {
       playEmptySound();
       return;
     }
-    hit.note.state = 1;
+    this.hitNote(hit.note, hit.judge, nowMs);
+  }
+
+  /** ノーツ1つをヒットとして処理する（タップ入力とオートプレイで共用）。スコア・コンボ・演出・音まで通常タップと同じ */
+  private hitNote(note: PlayNote, judge: HeadJudge, nowMs: number): void {
+    note.state = 1;
+    const lane = note.lane;
     const fever = isFever(this.entry?.data.fever ?? [], nowMs / 1000);
-    this.score += scoreFor(hit.judge, fever);
+    this.score += scoreFor(judge, fever);
     this.combo++;
     this.maxCombo = Math.max(this.maxCombo, this.combo);
-    // コンボ tier（FEVER 中は +1）で演出とヒット音のピッチが派手になる
+    // コンボ tier（FEVER 中は +1）で演出とヒット音が派手になる
     const tier = effectiveTier(this.combo, fever);
-    this.showJudge(hit.judge, tier);
-    this.burst(lane, hit.judge === 'perfect' ? 0 : hit.judge === 'great' ? 1 : 2, fever, tier);
-    playHitSound(hit.judge, tier);
-    vibrateHit(hit.judge);
+    this.showJudge(judge, tier);
+    this.burst(lane, judge === 'perfect' ? 0 : judge === 'great' ? 1 : 2, fever, tier);
+    playHitSound(judge, tier);
+    vibrateHit(judge);
     this.syncCombo();
     if (isCageCombo(this.combo)) this.triggerCage(this.combo);
-    if (hit.note.holdMs > 0) {
+    if (note.holdMs > 0) {
       // 長押し: 集計（PERFECT等への加算）は押し切ったときに頭の判定で行う。コンボは頭で増やす
-      beginHold(hit.note, hit.judge, 60000 / (this.entry?.data.bpm ?? 120));
+      beginHold(note, judge, 60000 / (this.entry?.data.bpm ?? 120));
       // ヒット音の連打を頭のヒットと同時に鳴らし始める（間隔は曲の BPM の16分音符）
-      const progress = Math.min(1, Math.max(0, (nowMs - hit.note.timeMs) / Math.max(1, hit.note.holdMs)));
-      startHoldSound(hit.note, tier, hit.note.timeMs + hit.note.holdMs - nowMs, progress, this.entry?.data.bpm ?? 120);
+      const progress = Math.min(1, Math.max(0, (nowMs - note.timeMs) / Math.max(1, note.holdMs)));
+      startHoldSound(note, tier, note.timeMs + note.holdMs - nowMs, progress, this.entry?.data.bpm ?? 120);
     } else {
-      this.counts[hit.judge]++;
+      this.counts[judge]++;
     }
     setData('score', this.score);
+  }
+
+  /**
+   * オートプレイ: 時刻の来たノーツを PERFECT で自動処理する。
+   * 長押しは頭を押したまま（離す処理が入らない）ので、advanceHold が尾で完走させる。
+   * レーンのフラッシュと波紋も出して、通常タップと同じ見た目にする。
+   */
+  private autoPlay(nowMs: number): void {
+    const lw = this.width / 4;
+    for (const n of this.notes) {
+      if (n.timeMs - nowMs > 0) break;
+      if (n.state !== 0) continue;
+      this.flash[n.lane] = 1;
+      this.ripples.push({
+        x: n.lane * lw + lw / 2,
+        y: this.height * HIT_Y_RATIO,
+        age: 0,
+        life: RIPPLE_LIFE,
+        c: LANE_COLORS[n.lane],
+      });
+      if (this.ripples.length > 24) this.ripples.shift();
+      this.hitNote(n, 'perfect', nowMs);
+    }
   }
 
   /** レーンを離した。まだ他の入力で押されていなければ、長押しを猶予に入れる */
@@ -567,6 +610,7 @@ export class Game {
       maxCombo: this.maxCombo,
       accuracy: acc,
       rank: rankFor(acc),
+      autoplay: this.autoplay,
     });
   }
 
@@ -605,6 +649,9 @@ export class Game {
       setData('lyricIndex', li);
       this.cb.onLyric(li);
     }
+
+    // オートプレイ中は、ミス掃除より先に時刻の来たノーツを PERFECT で処理する
+    if (this.autoplay) this.autoPlay(nowMs);
 
     const missed = sweepMisses(this.notes, nowMs);
     if (missed > 0) {

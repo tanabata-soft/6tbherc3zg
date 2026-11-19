@@ -606,6 +606,19 @@ button:disabled {
   margin: 6px 0;
 }
 
+/* オートプレイで演奏した回の印（ベストスコアに残らないことを見せる） */
+.result .autoplay-badge {
+  display: inline-block;
+  margin: 2px 0 6px;
+  padding: 3px 14px;
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  color: var(--gold);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 .banner {
   position: fixed;
   left: 16px;

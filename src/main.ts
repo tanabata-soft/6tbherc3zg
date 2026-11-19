@@ -32,6 +32,10 @@ let selectedDiff: Difficulty = load<Difficulty>('difficulty', 'easy');
 if (!(selectedDiff in DIFFICULTIES)) selectedDiff = 'easy';
 let offsetMs = clampOffset(load<number>('offset', 0));
 let lyricsOn = load<boolean>('lyrics', true);
+// デバッグモード（設定モーダル内のユーザー向け設定。?debug=1 のテスト用入口や5回タップのパネルとは別物）。
+// オンにしたときだけオートプレイのトグルを出す
+let debugModeOn = load<boolean>('debugMode', false);
+let autoplayOn = load<boolean>('autoplay', false);
 type BestMap = Record<string, number>;
 const bestKey = (song: SongId, diff: Difficulty): string => `${song}:${diff}`;
 const loadBests = (): BestMap => load<BestMap>('best', {});
@@ -107,6 +111,9 @@ function renderMenu(): void {
   renderToggle('sound-button', isSoundOn());
   renderToggle('vibrate-button', isVibrateOn());
   renderToggle('lyrics-button', lyricsOn);
+  renderToggle('debug-button', debugModeOn);
+  renderToggle('autoplay-button', autoplayOn);
+  $('autoplay-block').hidden = !debugModeOn;
   $('lyrics').hidden = !lyricsOn;
   setData('song', selectedSong);
   setData('difficulty', selectedDiff);
@@ -114,6 +121,8 @@ function renderMenu(): void {
   setData('sound', isSoundOn() ? 'on' : 'off');
   setData('vibrate', isVibrateOn() ? 'on' : 'off');
   setData('lyrics', lyricsOn ? 'on' : 'off');
+  setData('debugMode', debugModeOn ? 'on' : 'off');
+  setData('autoplay', autoplayOn ? 'on' : 'off');
 }
 
 function setOffset(next: number): void {
@@ -134,6 +143,16 @@ $('vibrate-button').addEventListener('click', () => {
 $('lyrics-button').addEventListener('click', () => {
   lyricsOn = !lyricsOn;
   save('lyrics', lyricsOn);
+  renderMenu();
+});
+$('debug-button').addEventListener('click', () => {
+  debugModeOn = !debugModeOn;
+  save('debugMode', debugModeOn);
+  renderMenu();
+});
+$('autoplay-button').addEventListener('click', () => {
+  autoplayOn = !autoplayOn;
+  save('autoplay', autoplayOn);
   renderMenu();
 });
 
@@ -247,7 +266,8 @@ async function startGame(): Promise<void> {
   status.textContent = '読み込み中…';
   try {
     show('game');
-    await game.start(entry, selectedDiff, offsetMs);
+    // オートプレイはデバッグモードがオンのときだけ効く
+    await game.start(entry, selectedDiff, offsetMs, debugModeOn && autoplayOn);
     status.textContent = '';
   } catch {
     show('menu');
@@ -261,17 +281,21 @@ $('start-button').addEventListener('click', () => void startGame());
 function showResult(result: GameResult): void {
   const bests = loadBests();
   const key = bestKey(lastEntry.id, lastDiff);
-  const best = Math.max(bests[key] ?? 0, result.score);
-  bests[key] = best;
-  save('best', bests);
+  // オートプレイの結果はベストスコアに残さない（表示は保存済みのベストのまま）
+  const best = result.autoplay ? (bests[key] ?? 0) : Math.max(bests[key] ?? 0, result.score);
+  if (!result.autoplay) {
+    bests[key] = best;
+    save('best', bests);
+  }
   $('result-rank').textContent = result.rank;
+  $('result-autoplay').hidden = !result.autoplay;
   $('result-song').textContent = `${result.songTitle}（${DIFFICULTIES[lastDiff].label}）`;
   $('result-score').textContent = String(result.score);
   $('result-best').textContent = String(best);
   $('result-counts').textContent = `PERFECT ${result.counts.perfect} / GREAT ${result.counts.great} / GOOD ${result.counts.good} / MISS ${result.counts.miss}`;
   $('result-accuracy').textContent = result.accuracy.toFixed(1);
   $('result-combo').textContent = String(result.maxCombo);
-  $('game-live').textContent = `結果: ランク${result.rank}、スコア${result.score}、精度${result.accuracy.toFixed(1)}%`;
+  $('game-live').textContent = `結果: ランク${result.rank}、スコア${result.score}、精度${result.accuracy.toFixed(1)}%${result.autoplay ? '（オートプレイ）' : ''}`;
   show('result');
   renderMenu();
 }
@@ -314,6 +338,9 @@ exposeTestApi({
     sound: isSoundOn(),
     vibrate: isVibrateOn(),
     lyrics: lyricsOn,
+    debugMode: debugModeOn,
+    autoplay: autoplayOn,
+    gameAutoplay: game.isAutoplay,
     audioUnlocked: isUnlocked(),
     audioState: audioState(),
   }),
@@ -324,6 +351,14 @@ exposeTestApi({
     if (typeof patch.lyrics === 'boolean') {
       lyricsOn = patch.lyrics;
       save('lyrics', lyricsOn);
+    }
+    if (typeof patch.debugMode === 'boolean') {
+      debugModeOn = patch.debugMode;
+      save('debugMode', debugModeOn);
+    }
+    if (typeof patch.autoplay === 'boolean') {
+      autoplayOn = patch.autoplay;
+      save('autoplay', autoplayOn);
     }
     renderMenu();
   },

@@ -549,6 +549,51 @@ test('テスト用の入口は、?debug=1 でないときは出ない', async ({
   expect(exposed).toBe(false);
 });
 
+test('設定のデバッグモードでオートプレイでき、結果がベストスコアに残らない', async ({ page }) => {
+  await page.goto('/');
+  await openSettings(page);
+  // デバッグモードがオフのあいだは、オートプレイの項目は出ていない
+  const debugButton = page.locator('#debug-button');
+  await expect(debugButton).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#autoplay-block')).toBeHidden();
+  await debugButton.click();
+  await expect(debugButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#autoplay-block')).toBeVisible();
+  const autoplayButton = page.locator('#autoplay-button');
+  await autoplayButton.click();
+  await expect(autoplayButton).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#settings-close-bottom').click();
+  await expect(page.locator('#settings-dialog')).toBeHidden();
+
+  // 設定は保存されている（開き直しても戻らない）
+  await page.reload();
+  await openSettings(page);
+  await expect(page.locator('#debug-button')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#autoplay-button')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#settings-close-bottom').click();
+
+  // 途中で結果へ進むために、デバッグパネル（バージョン5回タップ）も出しておく
+  for (let i = 0; i < 5; i++) await page.locator('#version-line').click();
+  await expect(page.locator('#debug-panel')).toBeVisible();
+
+  await page.getByRole('button', { name: 'スタート' }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+  await expect(page.locator('body')).toHaveAttribute('data-autoplay', 'on');
+  // 入力していないのに、オートプレイでスコアとコンボが自動で伸びる
+  await expect(page.locator('body')).not.toHaveAttribute('data-score', '0', { timeout: 30_000 });
+  await expect(page.locator('body')).not.toHaveAttribute('data-combo', '0');
+
+  // 結果へ進む。オートプレイの印が出て、ベストスコアは 0 のまま（保存されていない）
+  await page.getByRole('button', { name: 'プレイ中なら、いまの成績で結果画面へ進む' }).click();
+  await expect(page.locator('#result-screen')).toBeVisible();
+  await expect(page.locator('#result-autoplay')).toBeVisible();
+  await expect(page.locator('#result-autoplay')).toHaveText('オートプレイ');
+  await expect(page.locator('#result-best')).toHaveText('0');
+  await page.locator('#back-button').click();
+  await openSettings(page);
+  await expect(page.locator('#menu-best')).toHaveText('0');
+});
+
 test('デバッグモード: バージョンを 5 回タップで操作パネルが出る', async ({ page }) => {
   await page.goto('/');
   const panel = page.locator('#debug-panel');
