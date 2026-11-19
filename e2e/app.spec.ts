@@ -205,6 +205,100 @@ test.describe('ヒット判定（実時間）', () => {
     await page.getByRole('button', { name: 'スタート' }).click();
     await expect(page.locator('body')).toHaveAttribute('data-holds-completed', '1', { timeout: 30_000 });
   });
+
+  test('長押しの帯が尾まで見え続ける（尾の間際まで帯が届く）', async ({ page }) => {
+    // v1.7.1 の不具合修正の確認: 帯の描画を頭の仮想位置で打ち切っていたため、
+    // 尾がラインに届く前に帯が消えていた（実測では帯の上端がラインの約129px 手前で停止）。
+    // 完走するまでの間、帯の上端（＝尾）が判定ラインの 60px 以内まで近づくことを見る。
+    // 時刻ではなく空間で見るので、実時間テストの時計の寄れに左右されない。
+    const charts = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8')) as {
+      highway: { charts: { easy: [number, number, number?][] } };
+    };
+    const first = charts.highway.charts.easy.find((n) => (n[2] ?? 0) > 0);
+    if (!first) throw new Error('長押しが譜面にありません');
+    const hold = { t: first[0], lane: first[1], tail: first[0] + (first[2] ?? 0) };
+    const LANE_HEX = ['#ff6b6b', '#ffd166', '#4ecdc4', '#6c8cff'];
+    const rgb = [1, 3, 5].map((i) => parseInt((LANE_HEX[hold.lane] ?? '#ffffff').slice(i, i + 2), 16));
+    await page.goto('/');
+    const sampling = page.evaluate(
+      ({ h, rgb }) => {
+        return new Promise<{ minGap: number }>((resolve) => {
+          const done = { minGap: -1 };
+          const obs = new MutationObserver(() => {
+            if (document.body.dataset.game !== 'playing') return;
+            obs.disconnect();
+            const t0 = performance.now();
+            // 頭ヒットを確実にするため、頭より十分前（曲の 3 秒）から 50ms ごとに
+            // キーを流し続ける（タイマーが負荷で寄れても、どれかは判定窓に入る）。
+            // 完走するか、尾を過ぎたら止める。途中の同じレーンのタップノーツに
+            // 当たっても無害（長押し中は同じレーンに他のノーツはない）。
+            const spam = window.setInterval(() => {
+              const songMs = performance.now() - t0 - 2000;
+              if (songMs >= 3000) {
+                window.dispatchEvent(new KeyboardEvent('keydown', { key: ['d', 'f', 'j', 'k'][h.lane] }));
+              }
+              if (document.body.dataset.holdsCompleted === '1' || songMs > h.tail + 500) {
+                window.clearInterval(spam);
+              }
+            }, 50);
+            const cv = document.getElementById('game-canvas') as HTMLCanvasElement;
+            const cg = cv.getContext('2d');
+            // レーン中央付近の3列で、判定ラインの 20px 上より上にある最初のレーン色
+            // ピクセルを探し、ラインまでの距離（CSS px）の最小値を記録する。
+            // 判定枠の上端（ラインの 14px 上）は混ざるので走査から外す。
+            // 読み取りは列単位（全画面コピーはメインスレッドを圧迫するのでしない）。
+            const topGapCss = (): number => {
+              if (!cg || cv.width === 0) return -1;
+              const dsf = cv.height / cv.clientHeight;
+              const lw = cv.width / 4;
+              const cx = h.lane * lw + lw / 2;
+              const hyDev = cv.height * 0.82;
+              const yLimit = hyDev - 20 * dsf;
+              let best = -1;
+              for (const x of [cx - lw * 0.12, cx, cx + lw * 0.12]) {
+                const img = cg.getImageData(Math.floor(x), 0, 1, cv.height).data;
+                for (let y = 0; y < yLimit; y++) {
+                  const r = img[y * 4];
+                  const g = img[y * 4 + 1];
+                  const b = img[y * 4 + 2];
+                  if (Math.abs(r - rgb[0]) < 70 && Math.abs(g - rgb[1]) < 70 && Math.abs(b - rgb[2]) < 70) {
+                    const gap = (hyDev - y) / dsf;
+                    if (best < 0 || gap < best) best = gap;
+                    break;
+                  }
+                }
+              }
+              return best;
+            };
+            let frame = 0;
+            const tick = () => {
+              const songMs = performance.now() - t0 - 2000;
+              const completed = document.body.dataset.holdsCompleted === '1';
+              // 読み取りは1フレームおき（負荷を抑える）
+              if (!completed && songMs >= 4800 && frame++ % 2 === 0) {
+                const gap = topGapCss();
+                if (gap >= 0 && (done.minGap < 0 || gap < done.minGap)) done.minGap = gap;
+              }
+              if (completed || songMs > h.tail + 1500) {
+                resolve(done);
+                return;
+              }
+              requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          });
+          obs.observe(document.body, { attributes: true, attributeFilter: ['data-game'] });
+        });
+      },
+      { h: hold, rgb },
+    );
+    await page.getByRole('button', { name: 'スタート' }).click();
+    const res = await sampling;
+    // 帯の上端がラインの 60px 以内まで届いた（修正前は約129px 手前で帯が消えた）
+    expect(res.minGap).toBeGreaterThanOrEqual(0);
+    expect(res.minGap).toBeLessThan(60);
+    await expect(page.locator('body')).toHaveAttribute('data-holds-completed', '1', { timeout: 30_000 });
+  });
 });
 
 test('コンボ tier と節目表示がテスト用の入口で確認できる', async ({ page }) => {

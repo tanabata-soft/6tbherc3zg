@@ -578,7 +578,11 @@ export class Game {
       const headY = hy - ((n.timeMs - nowMs) / 1000 / fall) * hy;
       const tailMs = n.timeMs + n.holdMs;
       const tailY = hy - ((tailMs - nowMs) / 1000 / fall) * hy;
-      if (headY < -40 || headY > H + 40) continue;
+      // 描く範囲は「帯そのもの」が見える間で決める。頭の仮想位置は消費された後も
+      // 下がり続けるので、それで打ち切ると尾がラインに届く前に帯が消えてしまう
+      // （v1.7.0 までの不具合。実測: 891ms の長押しで最後の約344ms が見えなかった）。
+      // 尾が画面の下端を過ぎるまでは描き続ける。
+      if (tailY > H + 40 || headY < -40) continue;
       const c = LANE_COLORS[n.lane];
       const cx = n.lane * lw + lw / 2;
       const bw = lw - 36;

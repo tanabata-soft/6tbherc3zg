@@ -109,6 +109,48 @@ describe('長押しの状態遷移', () => {
     expect(n.holdPhase).toBe('done');
   });
 
+  it('完走は尾の時刻ちょうどで、tick の境界では前倒しされない', () => {
+    const n = holdNote(1900); // 頭1000、尾2900、tick 500ms（境界は 1500/2000/2500）
+    beginHold(n, 'perfect', 500);
+    // 最後の tick 境界（2500）でも完走しない。tick はスコア専用
+    const atTick = advanceHold(n, 2500);
+    expect(atTick.ticks).toBe(3);
+    expect(atTick.completed).toBe(false);
+    // 尾の 1ms 前でも完走しない
+    const justBefore = advanceHold(n, 2899);
+    expect(justBefore.completed).toBe(false);
+    expect(n.holdPhase).toBe('holding');
+    // 尾ちょうどで完走する
+    const atTail = advanceHold(n, 2900);
+    expect(atTail.completed).toBe(true);
+    expect(n.holdPhase).toBe('done');
+  });
+
+  it('尾の直前（猶予内）で離しても、完走は尾の時刻まで出ない', () => {
+    const n = holdNote(2000); // 尾3000
+    beginHold(n, 'perfect', 500);
+    releaseHold(n, 2950); // 尾の 50ms 前に離した（猶予の終わり 3050 は尾に届く）
+    // 尾の 1ms 前: 完走も失敗も出ない
+    expect(advanceHold(n, 2999)).toEqual({ ticks: 0, completed: false, failed: false });
+    expect(n.holdPhase).toBe('grace');
+    // 尾ちょうどで完走する（離した時刻では終わらない）
+    const ev = advanceHold(n, 3000);
+    expect(ev.completed).toBe(true);
+    expect(ev.failed).toBe(false);
+  });
+
+  it('尾まで猶予が届かない離し方は、尾より前に完走にならず失敗になる', () => {
+    const n = holdNote(2000); // 尾3000
+    beginHold(n, 'perfect', 500);
+    releaseHold(n, 2849); // 猶予の終わり 2949 < 尾 3000
+    const ev = advanceHold(n, 2950); // 猶予を過ぎた時点で失敗
+    expect(ev.failed).toBe(true);
+    expect(ev.completed).toBe(false);
+    // 尾の時刻になっても完走にはならない
+    expect(advanceHold(n, 3000).completed).toBe(false);
+    expect(n.holdPhase).toBe('failed');
+  });
+
   it('未開始のノーツには何も起きない', () => {
     const n = holdNote(2000);
     releaseHold(n, 1500); // holding でないので無視
