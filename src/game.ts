@@ -34,7 +34,7 @@ import {
 } from './logic';
 import type { SongEntry } from './charts';
 import { audioContext, loadBuffer, nowSeconds, playBuffer, resumeAudio, stopCurrent, unlockAudio } from './audio';
-import { playHitSound, playTickSound } from './sound';
+import { playCompleteSound, playFailSound, playHitSound, startHoldSound, stopAllHoldSounds, stopHoldSound } from './sound';
 import { vibrateHit } from './haptics';
 import { setData } from './debug';
 
@@ -238,6 +238,7 @@ export class Game {
     this.playing = false;
     cancelAnimationFrame(this.raf);
     stopCurrent();
+    stopAllHoldSounds();
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
@@ -271,6 +272,7 @@ export class Game {
     this.flash = [0, 0, 0, 0];
     this.pointerLanes.clear();
     this.keyLanes.clear();
+    stopAllHoldSounds();
     this.holdsCompleted = 0;
     this.holdsFailed = 0;
     setData('holdsCompleted', 0);
@@ -306,6 +308,7 @@ export class Game {
     this.playing = false;
     cancelAnimationFrame(this.raf);
     stopCurrent();
+    stopAllHoldSounds();
     setData('game', 'menu');
     this.cb.onAbort();
   }
@@ -339,7 +342,13 @@ export class Game {
     const nowMs = (nowSeconds() - this.startAt) * 1000;
     // 猶予（grace）中の長押しがあれば、新しいノーツより先に押し直しとして扱う
     for (const n of this.notes) {
-      if (n.lane === lane && n.holdPhase === 'grace' && repressHold(n, nowMs)) return;
+      if (n.lane === lane && n.holdPhase === 'grace' && repressHold(n, nowMs)) {
+        // 連続音を再開する（ピッチの上がり具合は経過分の progress で引き継ぐ）
+        const feverNow = isFever(this.entry?.data.fever ?? [], nowMs / 1000);
+        const progress = Math.min(1, Math.max(0, (nowMs - n.timeMs) / Math.max(1, n.holdMs)));
+        startHoldSound(n, effectiveTier(this.combo, feverNow), n.timeMs + n.holdMs - nowMs, progress);
+        return;
+      }
     }
     const hit = findHit(this.notes, lane, nowMs);
     if (!hit) return;
@@ -359,6 +368,9 @@ export class Game {
     if (hit.note.holdMs > 0) {
       // 長押し: 集計（PERFECT等への加算）は押し切ったときに頭の判定で行う。コンボは頭で増やす
       beginHold(hit.note, hit.judge, 60000 / (this.entry?.data.bpm ?? 120));
+      // 連続音を頭のヒットと同時に鳴らし始める（尾まで途切れない）
+      const progress = Math.min(1, Math.max(0, (nowMs - hit.note.timeMs) / Math.max(1, hit.note.holdMs)));
+      startHoldSound(hit.note, tier, hit.note.timeMs + hit.note.holdMs - nowMs, progress);
     } else {
       this.counts[hit.judge]++;
     }
@@ -370,7 +382,11 @@ export class Game {
     if (this.lanePressed(lane)) return;
     const nowMs = (nowSeconds() - this.startAt) * 1000;
     for (const n of this.notes) {
-      if (n.lane === lane && n.holdPhase === 'holding') releaseHold(n, nowMs);
+      if (n.lane === lane && n.holdPhase === 'holding') {
+        releaseHold(n, nowMs);
+        // 離したら連続音は即座に止める（押し直せば再開する）
+        stopHoldSound(n);
+      }
     }
   }
 
@@ -466,6 +482,7 @@ export class Game {
     this.playing = false;
     cancelAnimationFrame(this.raf);
     stopCurrent();
+    stopAllHoldSounds();
     const acc = accuracy(this.counts);
     setData('game', 'result');
     this.cb.onFinish({
@@ -523,14 +540,14 @@ export class Game {
       this.syncCombo();
     }
 
-    // 長押しの進行: tick スコア（拍ごと）、押し切ったら頭の判定で集計＋ボーナス、失敗はミス
+    // 長押しの進行: tick スコア（拍ごと。音は鳴らさず連続音に一本化）、
+    // 押し切ったら頭の判定で集計＋ボーナス＋完走音、失敗はミス＋失敗音
     for (const n of this.notes) {
       if (n.holdPhase !== 'holding' && n.holdPhase !== 'grace') continue;
       const ev = advanceHold(n, nowMs);
       if (ev.ticks > 0) {
         this.score += ev.ticks * HOLD_TICK_SCORE * (fever ? FEVER_MULTIPLIER : 1);
         setData('score', this.score);
-        playTickSound(effectiveTier(this.combo, fever));
       }
       if (ev.completed && n.headJudge) {
         this.counts[n.headJudge]++;
@@ -538,6 +555,9 @@ export class Game {
         this.holdsCompleted++;
         setData('holdsCompleted', this.holdsCompleted);
         setData('score', this.score);
+        // 連続音は尾の時刻ちょうどで止め、完走音へつなぐ
+        stopHoldSound(n);
+        playCompleteSound(n.headJudge, effectiveTier(this.combo, fever));
         this.burst(
           n.lane,
           n.headJudge === 'perfect' ? 0 : n.headJudge === 'great' ? 1 : 2,
@@ -552,6 +572,8 @@ export class Game {
         this.syncCombo();
         this.holdsFailed++;
         setData('holdsFailed', this.holdsFailed);
+        stopHoldSound(n);
+        playFailSound();
       }
     }
 

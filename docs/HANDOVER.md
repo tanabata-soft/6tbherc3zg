@@ -2,7 +2,7 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.8.0
+更新: 2026-11-19・版 v1.8.1
 
 ## 今の状態
 
@@ -12,6 +12,10 @@
 - 曲: 『石畳のハイウェイ』(BPM 135) / 『Kiso Night Silhouette』(BPM 150)。**v1.6.0 から音ゲー用ショート編集**（石畳 104.8秒 / Kiso Night 127.7秒。全長版は `assets-full/` に保管、編集手順は `assets-full/README.md`）
   - 譜面は `scripts/generate-charts.py`（librosa）で生成（v3方式、下記）。ノーツ数: 石畳 146/263/350、Kiso Night 191/383/499（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96]、Kiso Night [44,67][96,127]（秒、編集後のタイムライン）
+- v1.8.1 の変更:
+  - **長押しの音を拍 tick から「連続音」に変更**（オーナー実機フィードバック「長押し中も音が鳴るようにして」「長押し中は連続でなってる？」→ 連続音に決定）。`src/sound.ts` の `HOLD_TONE` / `holdToneFor(tier, progress)` / `startHoldSound(key, tier, durationMs, progress)` / `stopHoldSound(key)` / `stopAllHoldSounds()` が正本。仕様: 矩形波（mix 0.6）をローパス 2200Hz で丸め＋サイン波（mix 0.4）の持続音、基本 784Hz × tier 倍率、ピーク 0.085、進行で開始→尾に +2 半音まで上昇（周期的な揺れは入れない）。頭のヒットと同時に開始、尾ちょうどで停止して完走音へ接続。離したら即停止、grace 内の押し直しで再開（progress でピッチ上昇を引き継ぐ）。キーはノーツオブジェクトで、ホールドごとに独立音源・上限4つ。演奏終了/中止/開始リセット/効果音オフでも全停止する。
+  - **完走音と失敗音を追加**: 完走音は `COMPLETE_BLIP` / `playCompleteSound(judge, tier)`（F案2音＋1オクターブ上の3音目、頭の判定で音色変化、ピークは PERFECT 0.2 / GREAT 0.16 / GOOD 0.12 で通常ヒット音以下）。失敗音は `FAIL_BLIP` / `playFailSound()`（猶予切れ時に 784→523Hz と短く下がる、ピーク 0.08）。
+  - **拍 tick の音は廃止**（`playTickSound` / `TICK_BLIP` / `tickToneFor` を削除し連続音に一本化）。tick スコアの計算（logic.ts の advanceHold、HOLD_TICK_SCORE）は判定・スコア仕様として残置し、発火条件（押せている間だけ数える）も不変。`app:sound` イベントの kind は hold-start / hold-stop / complete / fail が増え、tick は出なくなった。E2E の完走テストで hold-start・complete の発火と tick の不在を確認する。
 - v1.8.0 の変更:
   - **ヒット音を「F案（8bit系）」に差し替え**（オーナーが6候補から選択）。`src/sound.ts` の `HIT_BLIP` がパラメータの正本: 矩形波の2音「ピロッ」（1音目 1568Hz 約32ms → 2音目 2093Hz 約50ms、指数減衰、頭にハイパスの小さなクリック）。判定別は PERFECT=明るく長め（peak 0.22）/ GREAT=少し短く（0.17）/ GOOD=1音目だけ 1397Hz で短く鈍く（0.12）。`hitToneFor(judge, tier)` は従来どおり tier ごとに +1 半音（上限 +4、logic.ts の hitPitchMultiplier）で、戻り値が { tone, freq1, freq2 } になった。長押し tick は `TICK_BLIP` / `tickToneFor(tier)`（1音だけの短い矩形波、peak 0.05、クリックなし）。旧3層音（HIT_TONE のノイズ＋三角波＋倍音 sparkle）は廃止。ヒット音専用バス（ゲイン→コンプレッサー→マスター）と `app:sound` イベント（detail.frequency は1音目の周波数）は不変。
   - **コンボ節目を「ケージ登場」に置き換え**（オーナー指示「30コンボでも出して」）。発火条件は `src/logic.ts` の `isCageCombo`（30の倍数 ∪ 100の倍数。100 は30の倍数ではないので両方含める）が正本で、`isCageBigCombo`（100の倍数）で一段大きい登場。従来の `isComboMilestone`（50ごと）と Canvas の節目文字は廃止。game.ts の `triggerCage` が data 属性 `cage` と紙吹雪（Canvas 粒子、通常26粒／big 70粒、右上から）を出し、キャラ表示は main.ts の `showCage`（DOM の #cage-pop）が担当: 右上（スコアの下）にスライドインし約1.25秒滞在、吹き出しのセリフは通常6種（CAGE_LINES）＋big専用2種（CAGE_BIG_LINES）をローテーション（映画の台詞の直引用はなし）、コンボ数はケージ側の「○○ COMBO」に出す。big ではキャラ拡大（116px→156px）＋ #game-canvas に CSS シェイク。素材は `src/assets/cage.png`（メディア生成したデフォルメのオリジナルイラスト。白背景を PIL で端からのフラッドフィル透過化し、ステッカーの白フチを残した 440×653、約340KB）。実在俳優の写真は使っていない。テスト用の入口 `setCombo` でも発火する（debugSetCombo 経由）。
@@ -61,8 +65,8 @@
   - **記録のバックアップ機能を削除した**（オーナー判断「いらない」）。メニューの書き出し／読み込み UI、`src/backup.ts`、`storage.ts` の export/import、バックアップ読み込み後に合わせ直す `reloadSound` / `reloadVibrate`、関連する単体テスト・E2E・shots の backup 画面をすべて撤去。**テンプレート標準からの意図的な逸脱。再追加しない**（CLAUDE.md の「このアプリ固有の決まり」にも明記）。保存データの版番号（`SCHEMA_VERSION`）は `src/storage.ts` が持つよう移した。保存そのもの（ベストスコア・オフセット・効果音/振動）は従来どおり端末内のみ。
   - **設定ボタンをメニュー下部のフッターへ移動**（上の設定モーダルの項を参照）。モーダルの中身と開閉の挙動は不変。
 - 公開 URL: https://tanabata-soft.github.io/6tbherc3zg/（リポジトリ: tanabata-soft/6tbherc3zg、public）
-- 検証: `npm run verify` 全通過（単体テスト94件、うちホールド16件・譜面 v3 の整合検証18件・歌詞5件）、E2E 21件（19 passed＋長押し系2件 flaky でリトライ通過。実時間テストの従来からの揺れ。この VM の全並行実行では長押し系が負荷で落ちることがあるが、直列実行と CI が正）、shots 15枚でゲーム画面（ホールド帯・歌詞3行）・game-combo（ケージ登場）・ホーム（尺表示 1:45）を目視確認済み
-- 単体プレビュー: `dist-preview/preview.html`（約8.3MB。ケージ素材の分だけ v1.7.1 の約7.9MB から増加）
+- 検証: `npm run verify` 全通過（単体テスト95件、うちホールド16件・譜面 v3 の整合検証18件・歌詞5件）、E2E 21件（19 passed＋長押し系2件 flaky でリトライ通過。実時間テストの従来からの揺れ。この VM の全並行実行では長押し系が負荷で落ちることがあるが、直列実行と CI が正）、shots 15枚でゲーム画面（ホールド帯・歌詞3行）・game-combo（ケージ登場）・ホーム（尺表示 1:45）を目視確認済み
+- 単体プレビュー: `dist-preview/preview.html`（約8.3MB）
 
 ## やりかけ
 
@@ -72,7 +76,7 @@
 
 1. **iPhone 実機で音が出るか再確認する**（v1.2.0 の音声対策の最終確認。マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.3.0）も見る。振動は Android 実機で確認する
 2. 遊んだ感触で譜面の密度や FEVER 区間を調整したくなったら、`scripts/generate-charts.py` の SONGS の fever（区間）や定数（HARD_CAP / NORMAL_CAP / EASY_CAP、パターンの確率）を変えて再生成し、版を上げて公開する（生成方式は v3。固定間隔グリッドに戻さない。設計の根拠は docs/CHART-DESIGN.md）
-3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_BLIP / TICK_BLIP、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、ケージのセリフは `src/main.ts` の CAGE_LINES / CAGE_BIG_LINES、`src/game.ts` の演出の定数（RING_LIFE など）を変える
+3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_BLIP / HOLD_TONE（長押し連続音）/ COMPLETE_BLIP / FAIL_BLIP、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、ケージのセリフは `src/main.ts` の CAGE_LINES / CAGE_BIG_LINES、`src/game.ts` の演出の定数（RING_LIFE など）を変える
 
 ## 注意・気づいたこと
 

@@ -191,6 +191,12 @@ test.describe('ヒット判定（実時間）', () => {
     if (!first) throw new Error('長押しが譜面にありません');
     const hold = { t: first[0], lane: first[1] };
     await page.goto('/');
+    // 効果音の発火（連続音の開始・完走音）も app:sound イベントで確かめる
+    await page.evaluate(() => {
+      const w = window as unknown as { __sounds: { kind?: string }[] };
+      w.__sounds = [];
+      document.addEventListener('app:sound', (e) => w.__sounds.push((e as CustomEvent).detail));
+    });
     // playing になった瞬間を起点に、頭の前後でキーを繰り返し押して押し続ける（keyup しない）。
     // 曲の時刻は playing の 2 秒後（READY）から進む前提。音声の開始が遅れても
     // 判定窓（±160ms）にどれか1回が入るよう、頭の 300ms 前〜900ms 後まで 100ms ごとに送る
@@ -213,6 +219,13 @@ test.describe('ヒット判定（実時間）', () => {
     }, hold);
     await page.getByRole('button', { name: 'スタート' }).click();
     await expect(page.locator('body')).toHaveAttribute('data-holds-completed', '1', { timeout: 30_000 });
+    // 長押し中は連続音が鳴り始め、押し切ったら完走音が鳴る。拍 tick の音は出ない
+    const kinds = await page.evaluate(() =>
+      (window as unknown as { __sounds: { kind?: string }[] }).__sounds.map((s) => s.kind),
+    );
+    expect(kinds).toContain('hold-start');
+    expect(kinds).toContain('complete');
+    expect(kinds).not.toContain('tick');
   });
 
   test('長押しの帯が尾まで見え続ける（尾の間際まで帯が届く）', async ({ page }) => {
