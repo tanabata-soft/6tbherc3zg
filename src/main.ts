@@ -239,6 +239,10 @@ exposeTestApi({
     renderMenu();
   },
   startGame: () => startGame(),
+  // 撮影・E2E 用: プレイ中のコンボ数を直接セットする（コンボ連動エフェクトの確認用）
+  setCombo: (n: unknown) => {
+    if (typeof n === 'number') game.debugSetCombo(n);
+  },
 });
 requestPersist();
 setupUpdateBanner($('update-banner'), $<HTMLButtonElement>('update-button'), $('update-later'));

@@ -245,6 +245,94 @@ export function sweepMisses(notes: PlayNote[], nowMs: number): number {
   return missed;
 }
 
+// ---- コンボ連動の演出段階（tier）とヒット音のピッチ ----
+// コンボが伸びるほど演出と音が派手になる。段階の境界と係数はここを正本にする。
+
+/** tier が上がり始めるコンボ数（tier 0〜4） */
+export const COMBO_TIER_STARTS = [0, 10, 25, 50, 100] as const;
+export const MAX_COMBO_TIER = COMBO_TIER_STARTS.length - 1;
+
+/** コンボ数から演出段階（0〜4）を返す */
+export function comboTier(combo: number): number {
+  let tier = 0;
+  for (let i = 0; i < COMBO_TIER_STARTS.length; i++) {
+    if (combo >= COMBO_TIER_STARTS[i]) tier = i;
+  }
+  return tier;
+}
+
+/** FEVER 中は実質 +1 tier（上限あり） */
+export function effectiveTier(combo: number, fever: boolean): number {
+  return Math.min(MAX_COMBO_TIER, comboTier(combo) + (fever ? 1 : 0));
+}
+
+/** 節目表示を出すコンボ数か（50 ごと） */
+export function isComboMilestone(combo: number): boolean {
+  return combo > 0 && combo % 50 === 0;
+}
+
+/** tier ごとの演出パラメータ。値が大きいほど派手 */
+export interface TierFx {
+  /** ヒット時の粒子数の倍率 */
+  particleMul: number;
+  /** 粒子の大きさ (px) */
+  particleSize: number;
+  /** 輪の最大半径の倍率 */
+  ringMul: number;
+  /** 輪の線の太さの倍率 */
+  ringWidthMul: number;
+  /** ノーツの弾け（ポップ）の最大拡大率の倍率 */
+  popMul: number;
+  /** 判定文字の拡大率 */
+  judgeMul: number;
+  /** 判定文字の色を金色寄りに寄せる割合（0〜1） */
+  judgeTint: number;
+  /** レーンのフラッシュの明るさの倍率 */
+  flashMul: number;
+  /** コンボ数字の拡大率 */
+  comboScale: number;
+  /** コンボ数字の色 */
+  comboColor: string;
+}
+
+const TIER_FX: readonly TierFx[] = [
+  { particleMul: 1.0, particleSize: 4, ringMul: 1.0, ringWidthMul: 1.0, popMul: 1.0, judgeMul: 1.0, judgeTint: 0, flashMul: 1.0, comboScale: 1.0, comboColor: 'rgba(255,255,255,.9)' },
+  { particleMul: 1.35, particleSize: 4, ringMul: 1.12, ringWidthMul: 1.2, popMul: 1.12, judgeMul: 1.06, judgeTint: 0.15, flashMul: 1.2, comboScale: 1.05, comboColor: '#a5f3fc' },
+  { particleMul: 1.7, particleSize: 5, ringMul: 1.28, ringWidthMul: 1.4, popMul: 1.25, judgeMul: 1.13, judgeTint: 0.3, flashMul: 1.45, comboScale: 1.14, comboColor: '#4ecdc4' },
+  { particleMul: 2.1, particleSize: 5, ringMul: 1.45, ringWidthMul: 1.65, popMul: 1.4, judgeMul: 1.22, judgeTint: 0.5, flashMul: 1.7, comboScale: 1.27, comboColor: '#ffd166' },
+  { particleMul: 2.6, particleSize: 6, ringMul: 1.65, ringWidthMul: 2.0, popMul: 1.55, judgeMul: 1.32, judgeTint: 0.7, flashMul: 2.0, comboScale: 1.45, comboColor: '#ff8ad8' },
+];
+
+/** tier の演出パラメータを返す（範囲外は丸める） */
+export function tierFx(tier: number): TierFx {
+  const t = Math.min(MAX_COMBO_TIER, Math.max(0, Math.floor(tier)));
+  return TIER_FX[t];
+}
+
+/** #rrggbb の色を target へ k（0〜1）の割合で寄せる */
+export function tintColor(hex: string, target: string, k: number): string {
+  const parse = (s: string): [number, number, number] => [
+    parseInt(s.slice(1, 3), 16),
+    parseInt(s.slice(3, 5), 16),
+    parseInt(s.slice(5, 7), 16),
+  ];
+  const a = parse(hex);
+  const b = parse(target);
+  const t = Math.min(1, Math.max(0, k));
+  const mixed = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  return `#${mixed.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** ヒット音のピッチ上昇（半音）。tier ごとに +1、上限は最高 tier 分 */
+export function hitPitchSemitones(tier: number): number {
+  return Math.min(MAX_COMBO_TIER, Math.max(0, Math.floor(tier)));
+}
+
+/** ヒット音のピッチ倍率 */
+export function hitPitchMultiplier(tier: number): number {
+  return Math.pow(2, hitPitchSemitones(tier) / 12);
+}
+
 /** 譜面データの検証。問題があれば文言の配列を返す（生成スクリプトと同じ規則） */
 export function validateCharts(song: SongData): string[] {
   const errors: string[] = [];

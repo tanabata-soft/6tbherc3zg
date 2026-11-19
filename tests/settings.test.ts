@@ -39,8 +39,8 @@ describe('効果音の設定（sound）', () => {
 
   it('判定ごとの音は PERFECT がいちばん高く、音量も大きい', async () => {
     const { HIT_TONE } = await import('../src/sound');
-    expect(HIT_TONE.perfect.freq).toBeGreaterThan(HIT_TONE.great.freq);
-    expect(HIT_TONE.great.freq).toBeGreaterThan(HIT_TONE.good.freq);
+    expect(HIT_TONE.perfect.baseFreq).toBeGreaterThan(HIT_TONE.great.baseFreq);
+    expect(HIT_TONE.great.baseFreq).toBeGreaterThan(HIT_TONE.good.baseFreq);
     expect(HIT_TONE.perfect.peak).toBeGreaterThan(HIT_TONE.great.peak);
     expect(HIT_TONE.great.peak).toBeGreaterThan(HIT_TONE.good.peak);
     // 曲を邪魔しない控えめな音量

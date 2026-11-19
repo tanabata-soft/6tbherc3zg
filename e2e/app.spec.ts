@@ -207,6 +207,25 @@ test.describe('ヒット判定（実時間）', () => {
   });
 });
 
+test('コンボ tier と節目表示がテスト用の入口で確認できる', async ({ page }) => {
+  await page.goto('/?debug=1');
+  await page.getByRole('button', { name: 'スタート' }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-game', 'playing', { timeout: 30_000 });
+  // コンボを直接セットすると、tier と節目（50 ごと）が data 属性に出る
+  await page.evaluate(() => {
+    const w = window as unknown as { __pwaTest?: { setCombo?: (n: number) => void } };
+    w.__pwaTest?.setCombo?.(100);
+  });
+  await expect(page.locator('body')).toHaveAttribute('data-combo', '100');
+  await expect(page.locator('body')).toHaveAttribute('data-combo-tier', '4');
+  await expect(page.locator('body')).toHaveAttribute('data-milestone', '100');
+  await page.evaluate(() => {
+    const w = window as unknown as { __pwaTest?: { setCombo?: (n: number) => void } };
+    w.__pwaTest?.setCombo?.(30);
+  });
+  await expect(page.locator('body')).toHaveAttribute('data-combo-tier', '2');
+});
+
 test('manifest と Service Worker が使える', async ({ page }) => {
   await page.goto('/');
   const href = await page.locator('link[rel="manifest"]').getAttribute('href');

@@ -11,8 +11,10 @@ import {
   LANE_COLORS,
   advanceHold,
   beginHold,
+  effectiveTier,
   emptyCounts,
   findHit,
+  isComboMilestone,
   isFever,
   makePlayNotes,
   rankFor,
@@ -21,6 +23,8 @@ import {
   repressHold,
   scoreFor,
   sweepMisses,
+  tierFx,
+  tintColor,
   type Difficulty,
   type Judge,
   type JudgementCounts,
@@ -28,7 +32,7 @@ import {
 } from './logic';
 import type { SongEntry } from './charts';
 import { audioContext, loadBuffer, nowSeconds, playBuffer, resumeAudio, stopCurrent, unlockAudio } from './audio';
-import { playHitSound } from './sound';
+import { playHitSound, playTickSound } from './sound';
 import { vibrateHit } from './haptics';
 import { setData } from './debug';
 
@@ -63,6 +67,7 @@ interface Particle {
   age: number;
   life: number;
   c: string;
+  size: number;
 }
 /** 広がる輪（ヒットの衝撃） */
 interface Ring {
@@ -72,6 +77,8 @@ interface Ring {
   life: number;
   maxR: number;
   c: string;
+  /** 線の太さの倍率（コンボ tier 連動） */
+  widthMul: number;
 }
 /** ノーツが一瞬膨らんで消える残像 */
 interface Pop {
@@ -79,6 +86,8 @@ interface Pop {
   age: number;
   life: number;
   c: string;
+  /** 最大の拡大率（コンボ tier 連動） */
+  maxScale: number;
 }
 /** タップした場所に出る波紋 */
 interface Ripple {
@@ -93,6 +102,9 @@ const RING_LIFE = 0.32;
 const POP_LIFE = 0.18;
 const RIPPLE_LIFE = 0.38;
 const JUDGE_LIFE = 0.55;
+const MILESTONE_LIFE = 0.9;
+/** 粒子の総数の上限（iPhone で 60fps を保つため。死んだ粒子はプールで再利用する） */
+const MAX_PARTICLES = 300;
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -114,12 +126,16 @@ export class Game {
   private bg: HTMLImageElement | null = null;
   private flash = [0, 0, 0, 0];
   private particles: Particle[] = [];
+  private particlePool: Particle[] = [];
   private rings: Ring[] = [];
   private pops: Pop[] = [];
   private ripples: Ripple[] = [];
   private judgeText = '';
   private judgeColor = '#fff';
+  private judgeTier = 0; // 判定文字を出した時点のコンボ tier（大きさ・色に使う）
   private judgeShownAt = -Infinity; // AudioContext 時刻（秒）
+  private milestoneText = '';
+  private milestoneShownAt = -Infinity; // AudioContext 時刻（秒）
   private lastFrameAt = 0; // 前フレームの AudioContext 時刻（秒）。dt の計算用
   private width = 0;
   private height = 0;
@@ -253,8 +269,13 @@ export class Game {
     this.holdsFailed = 0;
     setData('holdsCompleted', 0);
     setData('holdsFailed', 0);
+    setData('combo', 0);
+    setData('comboTier', 0);
     this.judgeText = '';
+    this.judgeTier = 0;
     this.judgeShownAt = -Infinity;
+    this.milestoneText = '';
+    this.milestoneShownAt = -Infinity;
     this.durationSec = buf.duration;
     this.bg = new Image();
     this.bg.src = entry.jacketUrl;
@@ -307,6 +328,7 @@ export class Game {
       life: RIPPLE_LIFE,
       c: LANE_COLORS[lane],
     });
+    if (this.ripples.length > 24) this.ripples.shift();
     const nowMs = (nowSeconds() - this.startAt) * 1000;
     // 猶予（grace）中の長押しがあれば、新しいノーツより先に押し直しとして扱う
     for (const n of this.notes) {
@@ -319,10 +341,14 @@ export class Game {
     this.score += scoreFor(hit.judge, fever);
     this.combo++;
     this.maxCombo = Math.max(this.maxCombo, this.combo);
-    this.showJudge(hit.judge);
-    this.burst(lane, hit.judge === 'perfect' ? 0 : hit.judge === 'great' ? 1 : 2, fever);
-    playHitSound(hit.judge);
+    // コンボ tier（FEVER 中は +1）で演出とヒット音のピッチが派手になる
+    const tier = effectiveTier(this.combo, fever);
+    this.showJudge(hit.judge, tier);
+    this.burst(lane, hit.judge === 'perfect' ? 0 : hit.judge === 'great' ? 1 : 2, fever, tier);
+    playHitSound(hit.judge, tier);
     vibrateHit(hit.judge);
+    this.syncCombo();
+    if (isComboMilestone(this.combo)) this.showMilestone(this.combo);
     if (hit.note.holdMs > 0) {
       // 長押し: 集計（PERFECT等への加算）は押し切ったときに頭の判定で行う。コンボは頭で増やす
       beginHold(hit.note, hit.judge, 60000 / (this.entry?.data.bpm ?? 120));
@@ -341,33 +367,74 @@ export class Game {
     }
   }
 
-  private showJudge(judge: Judge): void {
+  private showJudge(judge: Judge, tier = 0): void {
     this.judgeText = JUDGE_LABEL[judge];
-    this.judgeColor = JUDGE_COLOR[judge];
+    this.judgeTier = tier;
+    // tier が高いほど判定文字の色を金色寄りに寄せる（MISS はそのまま）
+    this.judgeColor =
+      judge === 'miss' ? JUDGE_COLOR.miss : tintColor(JUDGE_COLOR[judge], '#ffedb0', tierFx(tier).judgeTint);
     this.judgeShownAt = nowSeconds();
   }
 
-  /** ヒット演出: ノーツの膨らむ残像＋広がる輪＋粒子。FEVER 中は金色で強める */
-  private burst(lane: number, level: 0 | 1 | 2, fever: boolean): void {
+  /** コンボ数の節目表示（50 ごと） */
+  private showMilestone(combo: number): void {
+    this.milestoneText = `${combo} COMBO`;
+    this.milestoneShownAt = nowSeconds();
+    setData('milestone', combo);
+  }
+
+  /** コンボと tier をテスト用の入口（data 属性）へ出す */
+  private syncCombo(): void {
+    setData('combo', this.combo);
+    setData('comboTier', effectiveTier(this.combo, false));
+  }
+
+  /** テスト/撮影用: コンボ数を直接セットする（節目なら節目表示も出す） */
+  debugSetCombo(n: number): void {
+    this.combo = Math.max(0, Math.floor(n));
+    this.maxCombo = Math.max(this.maxCombo, this.combo);
+    this.syncCombo();
+    if (isComboMilestone(this.combo)) this.showMilestone(this.combo);
+  }
+
+  /** 粒子を1つ出す。上限に達していたら出さない。死んだ粒子はプールから再利用する */
+  private spawnParticle(x: number, y: number, vx: number, vy: number, life: number, c: string, size: number): void {
+    if (this.particles.length >= MAX_PARTICLES) return;
+    const p = this.particlePool.pop() ?? { x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0, c: '', size: 4 };
+    p.x = x;
+    p.y = y;
+    p.vx = vx;
+    p.vy = vy;
+    p.age = 0;
+    p.life = life;
+    p.c = c;
+    p.size = size;
+    this.particles.push(p);
+  }
+
+  /** ヒット演出: ノーツの膨らむ残像＋広がる輪＋粒子。FEVER 中は金色、コンボ tier が高いほど派手 */
+  private burst(lane: number, level: 0 | 1 | 2, fever: boolean, tier: number): void {
+    const fx = tierFx(tier);
     const lw = this.width / 4;
     const cx = lane * lw + lw / 2;
     const cy = this.height * HIT_Y_RATIO;
     const c = fever ? GOLD : LANE_COLORS[lane];
-    this.pops.push({ lane, age: 0, life: POP_LIFE, c });
-    this.rings.push({ x: cx, y: cy, age: 0, life: RING_LIFE, maxR: fever ? 58 : 46, c });
-    const n = (level === 0 ? 22 : level === 1 ? 14 : 8) + (fever ? 6 : 0);
+    this.pops.push({ lane, age: 0, life: POP_LIFE, c, maxScale: 1.5 * fx.popMul });
+    this.rings.push({
+      x: cx,
+      y: cy,
+      age: 0,
+      life: RING_LIFE,
+      maxR: (fever ? 58 : 46) * fx.ringMul,
+      c,
+      widthMul: fx.ringWidthMul,
+    });
+    if (this.rings.length > 24) this.rings.shift();
+    const n = Math.round(((level === 0 ? 22 : level === 1 ? 14 : 8) + (fever ? 6 : 0)) * fx.particleMul);
     for (let i = 0; i < n; i++) {
       const an = Math.random() * Math.PI * 2;
-      const sp = 140 + Math.random() * (level === 0 ? 380 : 260);
-      this.particles.push({
-        x: cx,
-        y: cy,
-        vx: Math.cos(an) * sp,
-        vy: Math.sin(an) * sp - 70,
-        age: 0,
-        life: 0.35 + Math.random() * 0.2,
-        c,
-      });
+      const sp = (140 + Math.random() * (level === 0 ? 380 : 260)) * (0.9 + 0.1 * tier);
+      this.spawnParticle(cx, cy, Math.cos(an) * sp, Math.sin(an) * sp - 70, 0.35 + Math.random() * 0.2, c, fx.particleSize);
     }
   }
 
@@ -419,8 +486,9 @@ export class Game {
     const missed = sweepMisses(this.notes, nowMs);
     if (missed > 0) {
       this.counts.miss += missed;
-      this.combo = 0;
+      this.combo = 0; // コンボが切れたら tier も 0 に戻り、演出は素に戻る
       this.showJudge('miss');
+      this.syncCombo();
     }
 
     // 長押しの進行: tick スコア（拍ごと）、押し切ったら頭の判定で集計＋ボーナス、失敗はミス
@@ -430,6 +498,7 @@ export class Game {
       if (ev.ticks > 0) {
         this.score += ev.ticks * HOLD_TICK_SCORE * (fever ? FEVER_MULTIPLIER : 1);
         setData('score', this.score);
+        playTickSound(effectiveTier(this.combo, fever));
       }
       if (ev.completed && n.headJudge) {
         this.counts[n.headJudge]++;
@@ -437,12 +506,18 @@ export class Game {
         this.holdsCompleted++;
         setData('holdsCompleted', this.holdsCompleted);
         setData('score', this.score);
-        this.burst(n.lane, n.headJudge === 'perfect' ? 0 : n.headJudge === 'great' ? 1 : 2, fever);
+        this.burst(
+          n.lane,
+          n.headJudge === 'perfect' ? 0 : n.headJudge === 'great' ? 1 : 2,
+          fever,
+          effectiveTier(this.combo, fever),
+        );
       }
       if (ev.failed) {
         this.counts.miss++;
         this.combo = 0;
         this.showJudge('miss');
+        this.syncCombo();
         this.holdsFailed++;
         setData('holdsFailed', this.holdsFailed);
       }
@@ -465,9 +540,12 @@ export class Game {
     }
     const lw = W / 4;
     const hy = H * HIT_Y_RATIO;
+    // このフレームの演出段階（コンボ×FEVER）。フラッシュとコンボ表示に使う
+    const frameFx = tierFx(effectiveTier(this.combo, fever));
     for (let i = 0; i < 4; i++) {
       if (this.flash[i] > 0) {
-        g.fillStyle = LANE_COLORS[i] + Math.round(this.flash[i] * 70).toString(16).padStart(2, '0');
+        const alpha = Math.min(200, Math.round(this.flash[i] * 70 * frameFx.flashMul));
+        g.fillStyle = LANE_COLORS[i] + alpha.toString(16).padStart(2, '0');
         g.fillRect(i * lw, 0, lw, H);
         this.flash[i] = Math.max(0, this.flash[i] - dt * 3.6);
       }
@@ -556,7 +634,7 @@ export class Game {
       p.age += dt;
       const k = p.age / p.life;
       if (k >= 1) continue;
-      const scale = 1 + 0.5 * k;
+      const scale = 1 + (p.maxScale - 1) * k;
       const w = (lw - 16) * scale;
       const h = 28 * scale;
       g.globalAlpha = 0.75 * (1 - k);
@@ -575,7 +653,7 @@ export class Game {
       const ease = 1 - (1 - k) * (1 - k);
       g.globalAlpha = 0.9 * (1 - k);
       g.strokeStyle = r.c;
-      g.lineWidth = 1 + 3.5 * (1 - k);
+      g.lineWidth = (1 + 3.5 * (1 - k)) * r.widthMul;
       g.beginPath();
       g.arc(r.x, r.y, 10 + (r.maxR - 10) * ease, 0, 7);
       g.stroke();
@@ -583,17 +661,23 @@ export class Game {
     this.rings = this.rings.filter((r) => r.age < r.life);
     g.globalAlpha = 1;
 
-    for (const p of this.particles) {
+    // 粒子は上限つき。死んだものはプールへ戻して再利用する（毎フレームの確保を避ける）
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
       p.age += dt;
-      if (p.age >= p.life) continue;
+      if (p.age >= p.life) {
+        this.particles[i] = this.particles[this.particles.length - 1];
+        this.particles.pop();
+        if (this.particlePool.length < MAX_PARTICLES) this.particlePool.push(p);
+        continue;
+      }
       p.vy += 900 * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       g.globalAlpha = 1 - p.age / p.life;
       g.fillStyle = p.c;
-      g.fillRect(p.x - 2, p.y - 2, 4, 4);
+      g.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
-    this.particles = this.particles.filter((p) => p.age < p.life);
     g.globalAlpha = 1;
 
     for (const r of this.ripples) {
@@ -622,22 +706,50 @@ export class Game {
       g.fillText('READY', W / 2, H * 0.4);
     }
     if (this.combo > 1) {
-      g.fillStyle = 'rgba(255,255,255,.9)';
-      g.font = 'bold 44px sans-serif';
+      // コンボ表示も tier で色・大きさが変わる（高 tier では光る）
+      const comboPx = Math.round(44 * frameFx.comboScale);
+      if (effectiveTier(this.combo, fever) >= 3) {
+        g.shadowColor = frameFx.comboColor;
+        g.shadowBlur = 16;
+      }
+      g.fillStyle = frameFx.comboColor;
+      g.font = `bold ${comboPx}px sans-serif`;
       g.fillText(String(this.combo), W / 2, H * 0.3);
+      g.shadowBlur = 0;
       g.font = '14px sans-serif';
-      g.fillText('COMBO', W / 2, H * 0.3 + 22);
+      g.fillText('COMBO', W / 2, H * 0.3 + 22 + (comboPx - 44));
     }
-    // 判定文字: 出た瞬間に大きく、縮みながらフェードする（経過時間ベース）
+    // 判定文字: 出た瞬間に大きく、縮みながらフェードする（経過時間ベース）。
+    // 出た時点の tier で拡大し、高 tier では光る
     const judgeAge = frameAt - this.judgeShownAt;
     if (this.judgeText && judgeAge < JUDGE_LIFE) {
       const popK = Math.min(1, judgeAge / 0.12);
-      const scale = 1.35 - 0.35 * popK;
+      const scale = (1.35 - 0.35 * popK) * tierFx(this.judgeTier).judgeMul;
       const alpha = judgeAge < 0.35 ? 1 : 1 - (judgeAge - 0.35) / (JUDGE_LIFE - 0.35);
       g.globalAlpha = Math.max(0, alpha);
+      if (this.judgeTier >= 3) {
+        g.shadowColor = this.judgeColor;
+        g.shadowBlur = 18;
+      }
       g.fillStyle = this.judgeColor;
       g.font = `bold ${Math.round(28 * scale)}px sans-serif`;
       g.fillText(this.judgeText, W / 2, H * 0.5);
+      g.shadowBlur = 0;
+      g.globalAlpha = 1;
+    }
+    // コンボの節目表示: 画面中央に大きく短時間出す
+    const milestoneAge = frameAt - this.milestoneShownAt;
+    if (this.milestoneText && milestoneAge < MILESTONE_LIFE) {
+      const popK = Math.min(1, milestoneAge / 0.15);
+      const scale = 1.5 - 0.5 * popK;
+      const alpha = milestoneAge < 0.6 ? 1 : 1 - (milestoneAge - 0.6) / (MILESTONE_LIFE - 0.6);
+      g.globalAlpha = Math.max(0, alpha);
+      g.shadowColor = GOLD;
+      g.shadowBlur = 24;
+      g.fillStyle = GOLD;
+      g.font = `bold ${Math.round(52 * scale)}px sans-serif`;
+      g.fillText(this.milestoneText, W / 2, H * 0.2);
+      g.shadowBlur = 0;
       g.globalAlpha = 1;
     }
     g.textAlign = 'left';

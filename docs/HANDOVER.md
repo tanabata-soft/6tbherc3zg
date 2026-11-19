@@ -2,7 +2,7 @@
 
 作業の区切りごとに書き直す(次の作業を始める人や AI が、ここだけ読めば再開できるように)。古くなった内容は消し、今の状態だけを残す。
 
-更新: 2026-11-19・版 v1.6.0
+更新: 2026-11-19・版 v1.7.0
 
 ## 今の状態
 
@@ -12,6 +12,9 @@
 - 曲: 『石畳のハイウェイ』(BPM 135) / 『Kiso Night Silhouette』(BPM 150)。**v1.6.0 から音ゲー用ショート編集**（石畳 104.8秒 / Kiso Night 127.7秒。全長版は `assets-full/` に保管、編集手順は `assets-full/README.md`）
   - 譜面は `scripts/generate-charts.py`（librosa）で生成（v3方式、下記）。ノーツ数: 石畳 146/263/350、Kiso Night 191/383/499（かんたん/ふつう/むずかしい）
   - FEVER: 石畳 [57,96]、Kiso Night [44,67][96,127]（秒、編集後のタイムライン）
+- v1.7.0 の変更:
+  - **コンボ連動エフェクト**（オーナー指示）。コンボ tier は `src/logic.ts` の `COMBO_TIER_STARTS = [0, 10, 25, 50, 100]`（tier 0〜4）が正本で、`comboTier` / `effectiveTier`（FEVER 中 +1、上限あり）/ `tierFx`（tier ごとの演出パラメータ）/ `isComboMilestone`（50 ごと）が純関数。game.ts はヒット時に tier を確定して burst・判定文字・ヒット音へ渡し、フラッシュとコンボ表示はフレームごとの tier で描く。節目表示は「○○ COMBO」を 0.9 秒。MISS（通常・長押し失敗とも）でコンボ 0 ＝ tier 0 に戻る。粒子は上限 `MAX_PARTICLES = 300`＋プール再利用（game.ts の spawnParticle）。data 属性に `combo` / `comboTier` / `milestone` を出し、テスト用の入口に `setCombo(n)`（main.ts → game.debugSetCombo）を追加。shots の `game-combo` 画面が最高 tier の見た目を撮る。
+  - **ヒット音を作り替え**（オーナー指示）。`src/sound.ts` の `HIT_TONE` がパラメータの正本: アタック（ハイパス 3200Hz のノイズ 12〜16ms）＋本体（三角波、ピッチダウン endRatio 約0.56〜0.6、減衰 60〜90ms）＋倍音（2倍音、sparkle 比率。perfect 0.35 / great 0.15 / good 0）。`hitToneFor(judge, tier)` が tier ごとに +1 半音（上限 +4、logic.ts の hitPitchMultiplier）。長押し tick は `TICK_TONE` / `playTickSound(tier)`（peak 0.05・減衰 45ms の軽量版。v1.6.0 までは tick 無音だった）。ヒット音は専用バス（ゲイン 0.9 → DynamicsCompressor → マスター）を通す。`app:sound` イベントの detail に tier を追加（kind は hit / tick）。
 - v1.6.0 の変更:
   - **楽曲を音ゲー用ショート編集に差し替え**（オーナー指示「曲が長いので1番だけ／音ゲー用に編曲」→ 市販音ゲーの標準形＝イントロ→1番→サビで気持ちよく終わる約2分編集を採用）。構成は元動画の歌詞字幕（mov_text）と小節ごとの RMS で特定し、カットは小節頭に合わせ、末尾にフェードアウトを付けた（ffmpeg で再エンコード、MP3 192kbps）。内部のつなぎ目はなく、編集後の拍トラッキングは全長版の拍列と平均1.5ms以内で一致することを確認済み。
     - 石畳のハイウェイ: 179.6秒 → **104.76秒**。イントロ〜1番（A・Bメロ）〜サビ1（57〜96秒）＋間奏4小節を残し、小節59頭（104.756秒）でカット、最後の2.0秒（102.756秒〜）にフェードアウト。
@@ -61,7 +64,7 @@
 
 1. **iPhone 実機で音が出るか再確認する**（v1.2.0 の音声対策の最終確認。マナーモード ON でも鳴るか、ホーム画面アプリでの起動・オフライン・上端のぼやけもあわせて）。更新は「更新」ボタンで切り替わるので、旧版のままになっていないかバージョン表示（v1.3.0）も見る。振動は Android 実機で確認する
 2. 遊んだ感触で譜面の密度や FEVER 区間を調整したくなったら、`scripts/generate-charts.py` の SONGS の fever（区間）や定数（HARD_CAP / NORMAL_CAP / EASY_CAP、パターンの確率）を変えて再生成し、版を上げて公開する（生成方式は v3。固定間隔グリッドに戻さない。設計の根拠は docs/CHART-DESIGN.md）
-3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_TONE、`src/game.ts` の演出の定数（RING_LIFE など）を変える
+3. ヒット音の音色や演出の強さを調整したくなったら、`src/sound.ts` の HIT_TONE / TICK_TONE、コンボ演出は `src/logic.ts` の TIER_FX と COMBO_TIER_STARTS、`src/game.ts` の演出の定数（RING_LIFE など）を変える
 
 ## 注意・気づいたこと
 
