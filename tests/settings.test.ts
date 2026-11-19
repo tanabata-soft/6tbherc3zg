@@ -37,13 +37,16 @@ describe('効果音の設定（sound）', () => {
     expect(reloaded.isSoundOn()).toBe(false);
   });
 
-  it('判定ごとの音（タンバリン）は PERFECT がいちばん大きく、部分音も多い', async () => {
-    const { tambourineFor } = await import('../src/sound');
-    expect(tambourineFor('perfect', 0).peak).toBeGreaterThan(tambourineFor('great', 0).peak);
-    expect(tambourineFor('great', 0).peak).toBeGreaterThan(tambourineFor('good', 0).peak);
-    expect(tambourineFor('perfect', 0).partials.length).toBeGreaterThan(tambourineFor('good', 0).partials.length);
+  it('判定ごとの音は PERFECT がいちばん長く、音量も大きい（GOOD は低く短い）', async () => {
+    const { HIT_BLIP } = await import('../src/sound');
+    const total = (j: 'perfect' | 'great' | 'good') => HIT_BLIP[j].dur1 + HIT_BLIP[j].dur2;
+    expect(total('perfect')).toBeGreaterThan(total('great'));
+    expect(total('great')).toBeGreaterThan(total('good'));
+    expect(HIT_BLIP.good.freq1).toBeLessThan(HIT_BLIP.perfect.freq1);
+    expect(HIT_BLIP.perfect.peak).toBeGreaterThan(HIT_BLIP.great.peak);
+    expect(HIT_BLIP.great.peak).toBeGreaterThan(HIT_BLIP.good.peak);
     // 曲を邪魔しない控えめな音量
-    expect(tambourineFor('perfect', 0).peak).toBeLessThanOrEqual(0.25);
+    expect(HIT_BLIP.perfect.peak).toBeLessThanOrEqual(0.25);
   });
 
   it('オフのときは音を出そうとしない（例外にもならない）', async () => {

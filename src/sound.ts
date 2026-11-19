@@ -1,19 +1,15 @@
 // 効果音は Web Audio で合成する（音声ファイルは持たない）。オン/オフ設定は必ず用意する。
 // ヒット音は、曲の再生と同じ AudioContext（src/audio.ts）を使い、その場で合成する。
 //
-// 通常タップのヒット音は v1.8.5 でタンバリン音に差し替えた（オーナーが候補 A〜F から
-// E案＝短い「シャン」＋きらめく余韻を選択。参照音は ~/workspace/your_files/tamb-e.wav で、
-// 合成レシピの数値は TAMB_PARTIALS / TAMB_GRAINS / TAMB_AIR が正本）。
-//   金属片の部分音 12本（3.4k〜12.6kHz）が速く減衰し、粒状の帯域ノイズと空気感の
-//   帯域ノイズが重なる。アタックは約8ms のランプで柔らかくし、カチッという硬い
-//   立ち上がりにしない。判定別: PERFECT はフル、GREAT はやや小さく短く、
-//   GOOD は部分音を減らしてさらに小さい。コンボ tier ではピッチを上げず、
-//   明るさ（高域の割合）だけを少し上げる。
+// ヒット音は v1.8.0 でオーナー決定の「F案（8bit系）」に差し替えた。
+// v1.8.5 でタンバリン音（E案）に差し替えたが、オーナー指示で v1.9.1 に F案へ戻した
+// （タンバリンの合成コードは残していない。長押しの連打・完走音はもともと F案の家族）:
+//   矩形波の2音「ピロッ」（1音目 1568Hz を約32ms → 2音目 2093Hz を約50ms、
+//   全体に速い減衰）。頭に小さなクリックを足して打撃感を出す。
+//   判定別: PERFECT は2音とも明るく長め、GREAT は少し短く、
+//   GOOD は1音目だけ・少し低く短く鈍く。
+// コンボの tier が上がるほど基準ピッチが +1 半音ずつ上がる（上限 +4 半音。logic.ts が正本）。
 // ヒット音は専用バス（ゲイン→コンプレッサー）を通し、重なってもクリップしにくくする。
-//
-// 長押しの連打・完走音は、v1.8.0 でオーナー決定の「F案（8bit系）」のまま据え置き:
-//   矩形波の2音「ピロッ」（1音目 1568Hz → 2音目 2093Hz、全体に速い減衰）。
-//   コンボの tier が上がるほど基準ピッチが +1 半音ずつ上がる（上限 +4 半音。logic.ts が正本）。
 //
 // 長押し中は v1.8.3 から「ヒット音の連打」: 頭のヒットと同時に、曲の16分音符の間隔で
 // F案ブリップを連続して鳴らす（v1.8.1 の持続オシレータ音はオーナー指示で廃止）。
@@ -51,129 +47,12 @@ export interface BlipToneParams {
   clickSec: number;
 }
 
-/** タンバリンの金属片の部分音1本（周波数・振幅・減衰率 [/s]。exp 減衰で rate が大きいほど速く消える） */
-export interface TambPartial {
-  freq: number;
-  amp: number;
-  decay: number;
-}
-
-/**
- * 金属片の部分音 12本（E案の合成レシピが正本。振幅 0.25〜0.8、減衰率 6〜14/s ＝ 約70〜160ms で消える）。
- * ランダムにせず固定値にしてある（テストで固定できるように）。
- */
-export const TAMB_PARTIALS: TambPartial[] = [
-  { freq: 3400, amp: 0.55, decay: 9 },
-  { freq: 3950, amp: 0.8, decay: 12 },
-  { freq: 4480, amp: 0.45, decay: 7 },
-  { freq: 5120, amp: 0.7, decay: 13 },
-  { freq: 5760, amp: 0.35, decay: 8 },
-  { freq: 6480, amp: 0.62, decay: 11 },
-  { freq: 7250, amp: 0.28, decay: 6 },
-  { freq: 8100, amp: 0.75, decay: 14 },
-  { freq: 9020, amp: 0.4, decay: 9 },
-  { freq: 10100, amp: 0.58, decay: 12 },
-  { freq: 11300, amp: 0.3, decay: 7 },
-  { freq: 12600, amp: 0.5, decay: 10 },
-];
-
-/** 粒状の揺れ1粒（帯域ノイズの小バースト。at は開始オフセット [秒]、dur は長さ [秒]、gain は相対音量） */
-export interface TambGrain {
-  at: number;
-  dur: number;
-  gain: number;
-}
-
-/** 粒状の揺れ: 3〜12kHz の帯域ノイズの小バースト（10〜30ms）を冒頭 100ms 内に散らす（固定値） */
-export const TAMB_GRAINS: TambGrain[] = [
-  { at: 0.003, dur: 0.018, gain: 0.5 },
-  { at: 0.011, dur: 0.012, gain: 0.3 },
-  { at: 0.015, dur: 0.016, gain: 0.36 },
-  { at: 0.019, dur: 0.025, gain: 0.6 },
-  { at: 0.024, dur: 0.014, gain: 0.25 },
-  { at: 0.031, dur: 0.02, gain: 0.45 },
-  { at: 0.038, dur: 0.011, gain: 0.35 },
-  { at: 0.044, dur: 0.028, gain: 0.55 },
-  { at: 0.049, dur: 0.016, gain: 0.2 },
-  { at: 0.052, dur: 0.02, gain: 0.44 },
-  { at: 0.055, dur: 0.013, gain: 0.4 },
-  { at: 0.06, dur: 0.022, gain: 0.5 },
-  { at: 0.066, dur: 0.017, gain: 0.3 },
-  { at: 0.068, dur: 0.013, gain: 0.29 },
-  { at: 0.071, dur: 0.026, gain: 0.6 },
-  { at: 0.076, dur: 0.012, gain: 0.28 },
-  { at: 0.08, dur: 0.019, gain: 0.42 },
-  { at: 0.083, dur: 0.018, gain: 0.41 },
-  { at: 0.084, dur: 0.015, gain: 0.38 },
-  { at: 0.087, dur: 0.024, gain: 0.52 },
-  { at: 0.09, dur: 0.01, gain: 0.24 },
-  { at: 0.092, dur: 0.021, gain: 0.48 },
-  { at: 0.094, dur: 0.014, gain: 0.33 },
-  { at: 0.096, dur: 0.027, gain: 0.57 },
-];
-
-/** 空気感の帯域ノイズ（5〜14kHz、減衰率 10/s）。gain はピークに対する相対音量 */
-export const TAMB_AIR = { loHz: 5000, hiHz: 14000, decay: 10, gain: 0.55 } as const;
-
-/** 粒状の揺れの帯域（Hz） */
-export const TAMB_GRAIN_BAND = { loHz: 3000, hiHz: 12000 } as const;
-
-/** アタックのランプ（秒）。硬い立ち上がり（カチッ）にしないため約8ms かけて上げる */
-export const TAMB_ATTACK_SEC = 0.008;
-
-/** 高域とみなす境（Hz）。これ以上の部分音と空気感が「明るさ」の対象になる */
-const TAMB_BRIGHT_HZ = 7000;
-
-/** tier ごとに明るさが増える割合（ピッチは上げない） */
-const TAMB_BRIGHT_PER_TIER = 0.15;
-
-/** 部分音の合計をピークへ寄せるための倍率（非整数倍音は位相が揃わないので、単純な正規化より少し持ち上げる） */
-const TAMB_PARTIAL_BOOST = 2.2;
-
-/** 判定ごとのタンバリン音の作り分け。PERFECT はフル、GREAT はやや小さく短く、GOOD は部分音を減らしてさらに小さい */
-export const TAMB_JUDGE: Record<HitJudge, { peak: number; partialCount: number; grainCount: number; decayMul: number }> = {
-  perfect: { peak: 0.24, partialCount: 12, grainCount: 24, decayMul: 1 },
-  great: { peak: 0.19, partialCount: 10, grainCount: 16, decayMul: 1.35 },
-  good: { peak: 0.13, partialCount: 7, grainCount: 8, decayMul: 1.7 },
+/** 判定ごとのヒット音。PERFECT は最も明るく長く、GOOD は1音だけ低く短く */
+export const HIT_BLIP: Record<HitJudge, BlipToneParams> = {
+  perfect: { freq1: 1568, freq2: 2093, freq3: 0, dur1: 0.032, dur2: 0.05, dur3: 0, decaySec: 0.03, peak: 0.22, clickPeak: 0.1, clickSec: 0.006 },
+  great: { freq1: 1568, freq2: 2093, freq3: 0, dur1: 0.028, dur2: 0.04, dur3: 0, decaySec: 0.026, peak: 0.17, clickPeak: 0.08, clickSec: 0.006 },
+  good: { freq1: 1397, freq2: 0, freq3: 0, dur1: 0.026, dur2: 0, dur3: 0, decaySec: 0.018, peak: 0.12, clickPeak: 0.05, clickSec: 0.005 },
 };
-
-/** 実際に鳴らすタンバリン音の仕様（tambourineFor が判定と tier から決める） */
-export interface TambourineSpec {
-  /** 音量のピーク */
-  peak: number;
-  /** 使う部分音（明るさの補正込み） */
-  partials: TambPartial[];
-  /** 使う粒（明るさの補正込みの相対音量） */
-  grains: TambGrain[];
-  /** 空気感の相対音量と減衰率 */
-  air: { gain: number; decay: number };
-  /** 明るさの倍率（1 = 補正なし。tier で上がる） */
-  brightness: number;
-}
-
-/**
- * 判定と tier から、タンバリン音の仕様を決める（純関数）。
- * tier ではピッチを上げず、明るさ（高域の部分音と空気感の割合）だけを少し上げる。
- */
-export function tambourineFor(judge: HitJudge, tier: number): TambourineSpec {
-  const j = TAMB_JUDGE[judge];
-  const brightness = 1 + TAMB_BRIGHT_PER_TIER * Math.min(4, Math.max(0, tier));
-  return {
-    peak: j.peak,
-    partials: TAMB_PARTIALS.slice(0, j.partialCount).map((p) => ({
-      freq: p.freq,
-      amp: p.freq >= TAMB_BRIGHT_HZ ? p.amp * brightness : p.amp,
-      decay: p.decay * j.decayMul,
-    })),
-    grains: TAMB_GRAINS.slice(0, j.grainCount).map((g) => ({
-      at: g.at,
-      dur: g.dur,
-      gain: g.gain * (1 + (brightness - 1) / 2),
-    })),
-    air: { gain: TAMB_AIR.gain * brightness, decay: TAMB_AIR.decay * j.decayMul },
-    brightness,
-  };
-}
 
 /**
  * 長押し中の連打の1発の音。F案ヒット音の家族で、通常ヒット音より少し小さく・短い。
@@ -256,7 +135,12 @@ export const FAIL_BLIP: BlipToneParams = {
   clickSec: 0,
 };
 
-
+/** 判定と tier から、実際に鳴らすパラメータと各音の周波数を決める */
+export function hitToneFor(judge: HitJudge, tier: number): { tone: BlipToneParams; freq1: number; freq2: number } {
+  const tone = HIT_BLIP[judge];
+  const mul = hitPitchMultiplier(tier);
+  return { tone, freq1: tone.freq1 * mul, freq2: tone.freq2 * mul };
+}
 
 /** 完走音のパラメータと各音の周波数（ピッチはヒット音と同じ規則で tier 連動） */
 export function completeToneFor(
@@ -367,96 +251,17 @@ function playBlipAt(tone: BlipToneParams, freq1: number, freq2: number, freq3: n
   }
 }
 
-// タンバリンの空気感・粒に使う長いノイズ（0.5秒）も使い回す
-let longNoiseBuffer: AudioBuffer | undefined;
-
-function getLongNoiseBuffer(ac: AudioContext): AudioBuffer {
-  if (longNoiseBuffer && longNoiseBuffer.sampleRate === ac.sampleRate) return longNoiseBuffer;
-  const len = Math.max(1, Math.floor(ac.sampleRate * 0.5));
-  longNoiseBuffer = ac.createBuffer(1, len, ac.sampleRate);
-  const data = longNoiseBuffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-  return longNoiseBuffer;
-}
-
-/** ゲインの包絡: 約8ms の柔らかいランプで上げ、setTargetAtTime で exp 減衰させる（レシピの減衰率 [/s] と一致させる） */
-function tambEnvelope(ac: AudioContext, peakValue: number, t: number, decayRate: number): GainNode {
-  const gn = ac.createGain();
-  gn.gain.setValueAtTime(0.0001, t);
-  gn.gain.exponentialRampToValueAtTime(Math.max(0.0002, peakValue), t + TAMB_ATTACK_SEC);
-  gn.gain.setTargetAtTime(0, t + TAMB_ATTACK_SEC, 1 / decayRate);
-  return gn;
-}
-
-/** タンバリン音を合成して鳴らす（部分音＋粒状の帯域ノイズ＋空気感の帯域ノイズ） */
-function playTambourine(spec: TambourineSpec): void {
-  const ac = audioContext();
-  const t = ac.currentTime;
-  const out = hitBus();
-
-  // 金属片の部分音: サイン波を本数ぶん重ねる。各音のピークは振幅比で分け、全体で spec.peak に寄せる
-  const totalAmp = spec.partials.reduce((s, p) => s + p.amp, 0) || 1;
-  for (const p of spec.partials) {
-    const osc = ac.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = p.freq;
-    const gn = tambEnvelope(ac, (spec.peak * p.amp * TAMB_PARTIAL_BOOST) / totalAmp, t, p.decay);
-    osc.connect(gn).connect(out);
-    osc.start(t);
-    osc.stop(t + TAMB_ATTACK_SEC + 6 / p.decay + 0.05);
-  }
-
-  // 空気感: 5〜14kHz の帯域ノイズ
-  {
-    const src = ac.createBufferSource();
-    src.buffer = getLongNoiseBuffer(ac);
-    const hp = ac.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = TAMB_AIR.loHz;
-    const lp = ac.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = TAMB_AIR.hiHz;
-    const gn = tambEnvelope(ac, spec.peak * spec.air.gain, t, spec.air.decay);
-    src.connect(hp).connect(lp).connect(gn).connect(out);
-    src.start(t, 0.13);
-    src.stop(t + TAMB_ATTACK_SEC + 6 / spec.air.decay + 0.05);
-  }
-
-  // 粒状の揺れ: 3〜12kHz の帯域ノイズの小バーストを、時刻オフセット付きで散らす
-  if (spec.grains.length > 0) {
-    const hp = ac.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = TAMB_GRAIN_BAND.loHz;
-    const lp = ac.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = TAMB_GRAIN_BAND.hiHz;
-    hp.connect(lp).connect(out);
-    for (const gr of spec.grains) {
-      const src = ac.createBufferSource();
-      src.buffer = getLongNoiseBuffer(ac);
-      const gn = ac.createGain();
-      const gt = t + gr.at;
-      gn.gain.setValueAtTime(0.0001, gt);
-      gn.gain.exponentialRampToValueAtTime(Math.max(0.0002, spec.peak * gr.gain), gt + 0.003);
-      gn.gain.exponentialRampToValueAtTime(0.0001, gt + gr.dur);
-      src.connect(gn).connect(hp);
-      // バッファ内の読み出し位置は粒ごとに決定的にずらす（同じ粒の並びでも毎回同じ顔つきにしない範囲で）
-      src.start(gt, (gr.at * 7) % 0.3);
-      src.stop(gt + gr.dur + 0.02);
-    }
-  }
-}
-
-/** ノーツに当たった瞬間のヒット音（タンバリン）。tier が高いほど高域が少し明るくなる（ピッチは上げない） */
+/** ノーツに当たった瞬間のヒット音。tier が高いほどピッチが上がる */
 export function playHitSound(judge: HitJudge, tier = 0): void {
   if (!enabled) return;
   try {
     const ac = audioContext();
     // iPhone では操作のあとに resume が必要
     void ac.resume();
-    playTambourine(tambourineFor(judge, tier));
+    const { tone, freq1, freq2 } = hitToneFor(judge, tier);
+    playBlip(tone, freq1, freq2);
     // テストが「どの音が鳴ったか」を確認できるようにイベントを出す
-    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hit', judge, tier } }));
+    document.dispatchEvent(new CustomEvent('app:sound', { detail: { kind: 'hit', judge, tier, frequency: freq1 } }));
   } catch {
     // 音が出せなくても続行する
   }
