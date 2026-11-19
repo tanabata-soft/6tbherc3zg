@@ -1,16 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-// 譜面 v2 の検証: ノーツが実測拍列（charts.json の beats）の細分位置に沿っていること。
+// 譜面 v3 の検証: ノーツが実測拍列（charts.json の beats）の細分位置に沿っていること、
+// パターン譜面のルール（3連続・同時押し・長押し）が守られていること。
 // v1 の固定間隔グリッドでは、周期の推定誤差が累積してグリッドと実拍のズレが
 // 曲の中で回転していた（冒頭と終盤で最大半拍近いズレ）。その回帰防止が目的。
 // ゲーム本体（src/logic.ts の SongData）は beats を読まないので、ここでは
-// charts.json を直接読む。
+// charts.json を直接読む。ノーツは [時刻ms, レーン, 長押しms?]。
+type RawNote = [number, number, number?];
 interface RawSong {
   durationMs: number;
   bpm: number;
   beats: number[];
-  charts: Record<'easy' | 'normal' | 'hard', [number, number][]>;
+  charts: Record<'easy' | 'normal' | 'hard', RawNote[]>;
 }
 
 const raw = JSON.parse(readFileSync(new URL('../src/data/charts.json', import.meta.url), 'utf8')) as Record<string, RawSong>;
@@ -36,7 +38,20 @@ function nearestDelta(subdiv: number[], t: number): number {
   return best;
 }
 
-describe('譜面データ v2（実測拍列との整合）', () => {
+/** 同じレーンが続く区間 [開始idx, 終了idx] の列 */
+function runs(notes: RawNote[]): [number, number][] {
+  const out: [number, number][] = [];
+  let i = 0;
+  while (i < notes.length) {
+    let j = i;
+    while (j + 1 < notes.length && notes[j + 1][1] === notes[i][1]) j++;
+    if (j - i + 1 >= 3) out.push([i, j]);
+    i = j + 1;
+  }
+  return out;
+}
+
+describe('譜面データ v3（実測拍列との整合とパターンのルール）', () => {
   for (const [id, song] of Object.entries(raw)) {
     describe(id, () => {
       it('実測拍列があり、単調増加で曲全体を覆う', () => {
@@ -88,17 +103,51 @@ describe('譜面データ v2（実測拍列との整合）', () => {
         }
       });
 
-      it('同一レーンの3連続がない', () => {
+      it('同一レーン4連続はなく、3連続は hard の縦連（間隔170ms以上）だけ', () => {
         for (const diff of DIFFS) {
-          const lanes = song.charts[diff].map((n) => n[1]);
-          for (let i = 0; i + 2 < lanes.length; i++) {
-            expect(lanes[i] === lanes[i + 1] && lanes[i + 1] === lanes[i + 2], `${diff} @${i}`).toBe(false);
+          const notes = song.charts[diff];
+          for (const [i0, i1] of runs(notes)) {
+            const run = notes.slice(i0, i1 + 1);
+            expect(run.length, `${diff} @${run[0][0]}ms`).toBe(3);
+            expect(diff).toBe('hard');
+            expect(run[1][0] - run[0][0]).toBeGreaterThanOrEqual(170);
+            expect(run[2][0] - run[1][0]).toBeGreaterThanOrEqual(170);
+          }
+        }
+      });
+
+      it('同時押しは2つまで。easy にはなく、hard には十分ある', () => {
+        for (const diff of DIFFS) {
+          const byTime = new Map<number, number>();
+          for (const [t] of song.charts[diff]) byTime.set(t, (byTime.get(t) ?? 0) + 1);
+          const pairs = [...byTime.values()].filter((c) => c === 2).length;
+          expect(Math.max(...byTime.values()), diff).toBeLessThanOrEqual(2);
+          if (diff === 'easy') expect(pairs).toBe(0);
+          if (diff === 'hard') expect(pairs).toBeGreaterThanOrEqual(8);
+        }
+      });
+
+      it('長押しが各難易度にあり、帯の中に同じレーンのノーツがなく、重ならない', () => {
+        for (const diff of DIFFS) {
+          const notes = song.charts[diff];
+          const holds = notes.filter((n) => (n[2] ?? 0) > 0);
+          expect(holds.length, diff).toBeGreaterThanOrEqual(3);
+          for (const [t, lane, hold] of holds) {
+            const tail = t + (hold ?? 0);
+            expect(hold ?? 0).toBeGreaterThanOrEqual(350);
+            expect(tail).toBeLessThanOrEqual(song.durationMs - 500);
+            for (const [t2, lane2] of notes) {
+              expect(lane2 === lane && t2 > t && t2 <= tail, `${diff} hold@${t}`).toBe(false);
+            }
+            for (const [t2] of holds) {
+              expect(t2 > t && t2 < tail, `${diff} hold@${t}`).toBe(false);
+            }
           }
         }
       });
 
       it('難易度が入れ子になっている（easy ⊆ normal ⊆ hard）', () => {
-        const key = (n: [number, number]) => `${n[0]}:${n[1]}`;
+        const key = (n: RawNote) => `${n[0]}:${n[1]}`;
         const hard = new Set(song.charts.hard.map(key));
         const normal = new Set(song.charts.normal.map(key));
         for (const n of song.charts.normal) expect(hard.has(key(n))).toBe(true);
